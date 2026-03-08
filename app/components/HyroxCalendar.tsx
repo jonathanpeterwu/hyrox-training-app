@@ -92,6 +92,8 @@ interface LogEntry {
     completed: string;
     notes: string;
     hrAvg: number | null;
+    hrMax?: number | null;
+    paceAvg?: string;
   };
   adjustments?: { fatigue: number; performance: number };
 }
@@ -356,7 +358,7 @@ export default function HyroxCalendar() {
   const [workoutOverrides, setWorkoutOverrides] = useState<Record<string, Workout>>({});
   const [progressionOverrides, setProgressionOverrides] = useState<Record<number, { fatigueOverride?: number; performanceOverride?: number }>>({});
   const [feedbackModal, setFeedbackModal] = useState<string | null>(null);
-  const [feedbackForm, setFeedbackForm] = useState({rpe:5,completed:"yes",notes:"",hrAvg:""});
+  const [feedbackForm, setFeedbackForm] = useState({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
   // Settings state
   const [startDate, setStartDate] = useState<Date>(DEFAULT_START_DATE);
   const [programWeeks, setProgramWeeks] = useState(DEFAULT_PROGRAM_WEEKS);
@@ -444,13 +446,18 @@ export default function HyroxCalendar() {
   }
 
   function submitFeedback(dateStr: string) {
-    const fb = {...feedbackForm, hrAvg: feedbackForm.hrAvg?parseInt(feedbackForm.hrAvg):null};
+    const fb = {
+      ...feedbackForm,
+      hrAvg: feedbackForm.hrAvg?parseInt(feedbackForm.hrAvg):null,
+      hrMax: feedbackForm.hrMax?parseInt(feedbackForm.hrMax):null,
+      paceAvg: feedbackForm.paceAvg||undefined,
+    };
     const workout = getWorkoutForDate(keyToDate(dateStr));
     const hrTarget = workout?.hr ? parseInt(workout.hr.split("–")[1])-5 : null;
     const adj = processFeedback({...fb, hrTarget, rpe: fb.rpe, completed: fb.completed, notes: fb.notes});
     setWorkoutLog(prev=>({...prev,[dateStr]:{...prev[dateStr],status:fb.completed,feedback:fb,adjustments:adj}}));
     setFeedbackModal(null);
-    setFeedbackForm({rpe:5,completed:"yes",notes:"",hrAvg:""});
+    setFeedbackForm({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
   }
 
   // ── AI CHAT (via server-side proxy) ───────────────────────────────────────
@@ -735,8 +742,11 @@ export default function HyroxCalendar() {
                   <div style={{fontSize:12,color:t.textMuted,lineHeight:1.9}}>
                     <div><span style={{color:t.textFaint}}>RPE: </span>{log.feedback.rpe}/10</div>
                     <div><span style={{color:t.textFaint}}>Status: </span>{log.feedback.completed}</div>
+                    {log.feedback.hrAvg&&<div><span style={{color:t.textFaint}}>Avg HR: </span>{log.feedback.hrAvg} bpm</div>}
+                    {log.feedback.hrMax&&<div><span style={{color:t.textFaint}}>Max HR: </span>{log.feedback.hrMax} bpm</div>}
+                    {log.feedback.paceAvg&&<div><span style={{color:t.textFaint}}>Avg Pace: </span>{log.feedback.paceAvg}/mi</div>}
                     {log.feedback.notes&&<div><span style={{color:t.textFaint}}>Notes: </span>{log.feedback.notes}</div>}
-                    <div style={{marginTop:8,padding:"7px 10px",background:t.bgInput,borderRadius:4,fontSize:9,display:"flex",gap:16}}>
+                    <div style={{marginTop:8,padding:"7px 10px",background:t.bgInput,borderRadius:4,fontSize:9,display:"flex",gap:16,flexWrap:"wrap"}}>
                       <span style={{color:"#FF6B35"}}>Fatigue {log.adjustments?.fatigue}/10</span>
                       <span style={{color:"#4ECDC4"}}>Perf {log.adjustments?.performance}/10</span>
                     </div>
@@ -795,45 +805,45 @@ export default function HyroxCalendar() {
       `}</style>
 
       {/* Top bar */}
-      <div style={{borderBottom:`1px solid ${t.border}`,padding:bp.isMobile?"8px 12px":"10px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,minHeight:bp.isMobile?44:56,flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"baseline",gap:bp.isMobile?6:12}}>
-          <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?20:26,fontWeight:900,color:"#FF6B35",letterSpacing:"0.08em"}}>HYROX</div>
+      <div style={{borderBottom:`1px solid ${t.border}`,padding:bp.isMobile?"8px 10px":"10px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:bp.isMobile?4:8,minHeight:bp.isMobile?44:56,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?4:12,flexShrink:0}}>
+          <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?18:26,fontWeight:900,color:"#FF6B35",letterSpacing:"0.08em",cursor:"pointer"}} onClick={()=>{setView("calendar");setSelectedDate(null);}}>HYROX</div>
           {!bp.isMobile && <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:t.textGhost}}>ADAPTIVE TRAINING CALENDAR</div>}
         </div>
-        <div style={{display:"flex",gap:bp.isMobile?6:10,alignItems:"center",flexWrap:"wrap"}}>
-          {/* Theme toggle */}
+        <div style={{display:"flex",gap:bp.isMobile?3:10,alignItems:"center",flexWrap:bp.isMobile?"nowrap":"wrap",overflow:bp.isMobile?"auto":"visible"}}>
+          {/* Theme toggle — icon only on mobile */}
           <button
             onClick={()=>{const next=isDark?"light":"dark";setThemeMode(next);saveSettings(startDate,programWeeks,hrZones,next);}}
-            style={{background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
+            style={{background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 6px":"5px 12px",fontSize:bp.isMobile?12:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em",flexShrink:0}}
             title={`Switch to ${isDark?"light":"dark"} mode`}
           >
-            {isDark?"☀ LIGHT":"● DARK"}
+            {bp.isMobile?(isDark?"☀":"●"):(isDark?"☀ LIGHT":"● DARK")}
           </button>
-          {/* D/W/M view switcher in top nav */}
-          <div style={{display:"flex",gap:2,background:t.bgInput,borderRadius:4,padding:1,border:`1px solid ${t.borderFocus}`}}>
+          {/* D/W/M view switcher */}
+          <div style={{display:"flex",gap:1,background:t.bgInput,borderRadius:4,padding:1,border:`1px solid ${t.borderFocus}`,flexShrink:0}}>
             {(["day","week","month"] as const).map(mode=>{
               const label=mode[0].toUpperCase();
               const active=view==="calendar"&&calendarMode===mode;
               return(
                 <button key={mode} onClick={()=>{setCalendarMode(mode);setView("calendar");setSelectedDate(null);}} style={{
                   background:active?"#FF6B3522":"transparent",border:"none",borderRadius:3,
-                  color:active?"#FF6B35":t.textFaint,cursor:"pointer",padding:bp.isMobile?"3px 7px":"4px 10px",
-                  fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",
+                  color:active?"#FF6B35":t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 7px":"4px 10px",
+                  fontSize:bp.isMobile?9:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",
                 }} title={`${mode} view (${label})`}>{label}</button>
               );
             })}
           </div>
           <button
             onClick={()=>{setSelectedDate(null);setChatMode("plan");setView("planchat");}}
-            style={{background:view==="planchat"?"#C084FC22":t.bgInput,border:`1px solid ${view==="planchat"?"#C084FC":t.borderFocus}`,borderRadius:4,color:view==="planchat"?"#C084FC":t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
+            style={{background:view==="planchat"?"#C084FC22":t.bgInput,border:`1px solid ${view==="planchat"?"#C084FC":t.borderFocus}`,borderRadius:4,color:view==="planchat"?"#C084FC":t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 7px":"5px 12px",fontSize:bp.isMobile?9:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em",flexShrink:0}}
           >
-            📋 {bp.isMobile?"PLAN":"ADJUST FULL PLAN"}
+            📋 {bp.isMobile?"":"ADJUST FULL PLAN"}
           </button>
           <button
             onClick={()=>{setSelectedDate(null);setView("settings");}}
-            style={{background:view==="settings"?"#60A5FA22":t.bgInput,border:`1px solid ${view==="settings"?"#60A5FA":t.borderFocus}`,borderRadius:4,color:view==="settings"?"#60A5FA":t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
+            style={{background:view==="settings"?"#60A5FA22":t.bgInput,border:`1px solid ${view==="settings"?"#60A5FA":t.borderFocus}`,borderRadius:4,color:view==="settings"?"#60A5FA":t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 7px":"5px 12px",fontSize:bp.isMobile?9:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em",flexShrink:0}}
           >
-            ⚙ {bp.isMobile?"":"SETTINGS"}
+            ⚙{bp.isMobile?"":" SETTINGS"}
           </button>
           {!bp.isMobile && (
             <div style={{fontSize:9,color:t.textGhost,letterSpacing:"0.1em"}}>
@@ -972,7 +982,7 @@ export default function HyroxCalendar() {
               {/* Auto-fill section */}
               <div style={{background:t.bgInput,borderRadius:6,padding:"14px 16px",marginBottom:16,border:`1px solid ${t.borderLight}`}}>
                 <div style={{fontFamily:"Barlow Condensed",fontSize:11,letterSpacing:"0.12em",color:"#FF6B35",marginBottom:12}}>QUICK SETUP — auto-calculate zones</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:12}}>
+                <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr":"1fr 1fr 1fr",gap:10,marginBottom:12}}>
                   <div>
                     <div style={{...labelStyle,fontSize:9}}>AGE</div>
                     <input type="number" placeholder="e.g. 30" onChange={e=>{
@@ -1102,9 +1112,51 @@ export default function HyroxCalendar() {
           const hasOverride=!!workoutOverrides[key];
 
           if (expanded) {
-            // Large card for week/day view
+            const isDay = calendarMode==="day";
+            const isMobWeek = bp.isMobile && calendarMode==="week";
+
+            // Mobile week view: compact horizontal row per day
+            if (isMobWeek) {
+              return (
+                <div key={key} className="cal-day" onClick={()=>{setSelectedDate(date);setChatMode("day");setShowMobileChat(false);}} style={{border:"1px solid",borderColor:isTdy?"#FF6B35":t.border,borderRadius:8,padding:"10px 12px",background:isTdy?t.cardTodayBg:t.bgAlt,cursor:"pointer",display:"flex",gap:12,alignItems:"center"}}>
+                  {/* Left: date column */}
+                  <div style={{textAlign:"center",minWidth:38,flexShrink:0}}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:9,color:t.textGhost,letterSpacing:"0.1em",lineHeight:1}}>{DAYS[(date.getDay()+6)%7].toUpperCase()}</div>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:22,fontWeight:900,color:isTdy?"#FF6B35":t.textMuted,lineHeight:1.1}}>{date.getDate()}</div>
+                  </div>
+                  {/* Color bar */}
+                  {workout&&meta&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:hasOverride?"#C084FC":meta.color,flexShrink:0}}/>}
+                  {/* Right: workout info */}
+                  <div style={{flex:1,minWidth:0}}>
+                    {workout&&meta?(
+                      <>
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+                          <span style={{fontSize:10,letterSpacing:"0.1em",color:meta.color}}>{meta.icon} {meta.label}</span>
+                          {log?.status&&<div style={{marginLeft:"auto",background:statusColor(log.status)+"22",border:`1px solid ${statusColor(log.status)}`,borderRadius:3,padding:"1px 6px",fontSize:8,color:statusColor(log.status)!}}>{log.status==="yes"?"✓":log.status==="partial"?"½":"✗"}</div>}
+                        </div>
+                        <div style={{fontFamily:"Barlow Condensed",fontSize:15,fontWeight:900,color:t.text,lineHeight:1.1,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{workout.title}</div>
+                        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                          {[["SETS",workout.sets],["PACE",workout.pace],["HR",workout.hr]].map(([l,v])=>(
+                            <div key={l}>
+                              <span style={{fontSize:8,color:t.textFaint,letterSpacing:"0.08em"}}>{l} </span>
+                              <span style={{fontSize:11,color:t.textMuted}}>{v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ):(
+                      <div style={{fontSize:12,color:t.textGhost,fontStyle:"italic"}}>Rest / No workout</div>
+                    )}
+                  </div>
+                  {/* Chevron */}
+                  <div style={{color:t.textGhost,fontSize:14,flexShrink:0}}>›</div>
+                </div>
+              );
+            }
+
+            // Desktop week / day view: full expanded card
             return (
-              <div key={key} className="cal-day" onClick={()=>{setSelectedDate(date);setChatMode("day");setShowMobileChat(false);}} style={{border:"1px solid",borderColor:isTdy?"#FF6B35":t.border,borderRadius:6,padding:"14px 16px",background:isTdy?t.cardTodayBg:t.bgAlt,position:"relative",cursor:"pointer",flex:1,minHeight:calendarMode==="day"?200:120}}>
+              <div key={key} className="cal-day" onClick={()=>{setSelectedDate(date);setChatMode("day");setShowMobileChat(false);}} style={{border:"1px solid",borderColor:isTdy?"#FF6B35":t.border,borderRadius:6,padding:"14px 16px",background:isTdy?t.cardTodayBg:t.bgAlt,position:"relative",cursor:"pointer",flex:1,minHeight:isDay?200:120}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                   <div style={{display:"flex",alignItems:"baseline",gap:8}}>
                     <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,color:isTdy?"#FF6B35":t.textMuted,lineHeight:1}}>{date.getDate()}</div>
@@ -1119,8 +1171,8 @@ export default function HyroxCalendar() {
                       <div style={{width:6,height:6,borderRadius:"50%",background:hasOverride?"#C084FC":meta.color}}/>
                       <span style={{fontSize:10,letterSpacing:"0.15em",color:meta.color}}>{meta.icon} {meta.label}</span>
                     </div>
-                    <div style={{fontFamily:"Barlow Condensed",fontSize:calendarMode==="day"?24:18,fontWeight:900,color:t.text,lineHeight:1.1,marginBottom:8}}>{workout.title}</div>
-                    <div style={{display:"flex",gap:calendarMode==="day"?16:10,flexWrap:"wrap",marginBottom:8}}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:isDay?24:18,fontWeight:900,color:t.text,lineHeight:1.1,marginBottom:8}}>{workout.title}</div>
+                    <div style={{display:"flex",gap:isDay?16:10,flexWrap:"wrap",marginBottom:8}}>
                       {[["SETS",workout.sets],["PACE",workout.pace],["REST",workout.rest],["HR",workout.hr]].map(([l,v])=>(
                         <div key={l}>
                           <span style={{fontSize:9,color:t.textFaint,letterSpacing:"0.1em"}}>{l} </span>
@@ -1150,7 +1202,7 @@ export default function HyroxCalendar() {
                     {hasOverride&&<div style={{width:bp.isMobile?3:4,height:bp.isMobile?3:4,borderRadius:"50%",background:"#C084FC55"}}/>}
                   </div>
                   {bp.isMobile ? (
-                    <div style={{fontFamily:"Barlow Condensed",fontSize:8,fontWeight:700,color:t.textMuted,lineHeight:1.1}}>{meta.icon}</div>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:7,fontWeight:700,color:t.textMuted,lineHeight:1.2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{meta.icon} {workout.title.length>10?workout.title.slice(0,9)+"…":workout.title}</div>
                   ) : (
                     <>
                       <div style={{fontFamily:"Barlow Condensed",fontSize:10,fontWeight:700,color:t.textMuted,lineHeight:1.2,marginBottom:3}}>{meta.icon} {workout.title.length>16?workout.title.slice(0,15)+"…":workout.title}</div>
@@ -1167,20 +1219,44 @@ export default function HyroxCalendar() {
         return (
           <div style={{padding:bp.isMobile?"10px 8px":"18px 20px"}}>
             {/* Calendar header with mode switcher */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:bp.isMobile?10:16,gap:10,flexWrap:"wrap"}}>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <button onClick={navPrev} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 10px":"5px 14px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?12:14}}>‹</button>
-                <button onClick={navNext} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 10px":"5px 14px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?12:14}}>›</button>
-                <button onClick={navToday} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textMuted,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?9:10,letterSpacing:"0.1em"}}>TODAY</button>
-              </div>
-              <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?14:18,fontWeight:900,letterSpacing:"0.12em",color:t.text}}>{headerLabel}</div>
-              <div style={{display:"flex",gap:3}}>
-                {([["day","D"],["week","W"],["month","M"]] as const).map(([mode,label])=>(
-                  <button key={mode} onClick={()=>setCalendarMode(mode)} style={modeBtnStyle(calendarMode===mode)} title={`${mode} view (${label})`}>
-                    {label}
-                  </button>
-                ))}
-              </div>
+            <div style={{marginBottom:bp.isMobile?10:16}}>
+              {bp.isMobile ? (
+                /* Mobile: compact 2-row layout */
+                <>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:16,fontWeight:900,letterSpacing:"0.1em",color:t.text}}>{headerLabel}</div>
+                    <div style={{display:"flex",gap:3}}>
+                      {([["day","D"],["week","W"],["month","M"]] as const).map(([mode,label])=>(
+                        <button key={mode} onClick={()=>setCalendarMode(mode)} style={modeBtnStyle(calendarMode===mode)} title={`${mode} view (${label})`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <button onClick={navPrev} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 12px",fontFamily:"Barlow Condensed",fontSize:14}}>‹</button>
+                    <button onClick={navNext} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 12px",fontFamily:"Barlow Condensed",fontSize:14}}>›</button>
+                    <button onClick={navToday} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textMuted,cursor:"pointer",padding:"5px 10px",fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.1em"}}>TODAY</button>
+                  </div>
+                </>
+              ) : (
+                /* Desktop: single row */
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <button onClick={navPrev} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 14px",fontFamily:"Barlow Condensed",fontSize:14}}>‹</button>
+                    <button onClick={navNext} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 14px",fontFamily:"Barlow Condensed",fontSize:14}}>›</button>
+                    <button onClick={navToday} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textMuted,cursor:"pointer",padding:"5px 12px",fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.1em"}}>TODAY</button>
+                  </div>
+                  <div style={{fontFamily:"Barlow Condensed",fontSize:18,fontWeight:900,letterSpacing:"0.12em",color:t.text}}>{headerLabel}</div>
+                  <div style={{display:"flex",gap:3}}>
+                    {([["day","D"],["week","W"],["month","M"]] as const).map(([mode,label])=>(
+                      <button key={mode} onClick={()=>setCalendarMode(mode)} style={modeBtnStyle(calendarMode===mode)} title={`${mode} view (${label})`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* MONTH VIEW */}
@@ -1200,19 +1276,27 @@ export default function HyroxCalendar() {
 
             {/* WEEK VIEW */}
             {calendarMode==="week" && (
-              <>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:4}}>
-                  {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:10,letterSpacing:"0.15em",color:t.textGhost,padding:"4px 0",fontFamily:"Barlow Condensed",fontWeight:700}}>{d}</div>)}
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
+              bp.isMobile ? (
+                /* Mobile: vertical stack */
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {weekDates.map(date=>renderDayCard(date, true))}
                 </div>
-              </>
+              ) : (
+                /* Desktop/tablet: 7-column grid */
+                <>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:4}}>
+                    {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:10,letterSpacing:"0.15em",color:t.textGhost,padding:"4px 0",fontFamily:"Barlow Condensed",fontWeight:700}}>{d}</div>)}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
+                    {weekDates.map(date=>renderDayCard(date, true))}
+                  </div>
+                </>
+              )
             )}
 
             {/* DAY VIEW (calendar day, not workout detail) */}
             {calendarMode==="day" && (
-              <div style={{maxWidth:600}}>
+              <div style={{maxWidth:bp.isMobile?undefined:600}}>
                 {renderDayCard(focusDate, true)}
               </div>
             )}
@@ -1269,9 +1353,19 @@ export default function HyroxCalendar() {
                   </div>
                   <input type="range" min={1} max={10} value={feedbackForm.rpe} onChange={e=>setFeedbackForm(f=>({...f,rpe:parseInt(e.target.value)}))} style={{width:"100%",accentColor:"#FF6B35"}}/>
                 </div>
-                <div style={{marginBottom:14}}>
-                  <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>AVG HR (optional)</div>
-                  <input type="number" placeholder={`Target: ${workout?.hr||"—"} bpm`} value={feedbackForm.hrAvg} onChange={e=>setFeedbackForm(f=>({...f,hrAvg:e.target.value}))} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none"}}/>
+                <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr":"1fr 1fr 1fr",gap:10,marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>AVG HR (bpm)</div>
+                    <input type="number" placeholder={workout?.hr||"—"} value={feedbackForm.hrAvg} onChange={e=>setFeedbackForm(f=>({...f,hrAvg:e.target.value}))} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none"}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>MAX HR (bpm)</div>
+                    <input type="number" placeholder="—" value={feedbackForm.hrMax} onChange={e=>setFeedbackForm(f=>({...f,hrMax:e.target.value}))} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none"}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>AVG PACE (min/mi)</div>
+                    <input type="text" placeholder={workout?.pace||"—"} value={feedbackForm.paceAvg} onChange={e=>setFeedbackForm(f=>({...f,paceAvg:e.target.value}))} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none"}}/>
+                  </div>
                 </div>
                 <div style={{marginBottom:18}}>
                   <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>NOTES</div>
