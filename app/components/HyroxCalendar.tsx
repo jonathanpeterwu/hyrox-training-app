@@ -2,8 +2,19 @@
 
 import { useState, useEffect, useRef } from "react";
 
+// ─── RESPONSIVE HOOK ─────────────────────────────────────────────────────────
+function useBreakpoint() {
+  const [width, setWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return { isMobile: width < 640, isTablet: width >= 640 && width < 1024, isDesktop: width >= 1024, width };
+}
+
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
-const START_DATE = new Date(2026, 2, 9);
+const START_DATE = new Date(2026, 2, 8); // Sunday Mar 8 — long run kickoff
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -233,7 +244,9 @@ export default function HyroxCalendar() {
   const [planMessages, setPlanMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [showMobileChat, setShowMobileChat] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const bp = useBreakpoint();
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({behavior:"smooth"}); });
 
@@ -243,7 +256,7 @@ export default function HyroxCalendar() {
   function getWorkoutForDate(date: Date, ignoreOverride=false): (Workout & { weekNum: number; dayIndex: number; key: string; isOverridden?: boolean }) | null {
     const dayIndex = (date.getDay()+6)%7;
     const diff = Math.floor((date.getTime()-START_DATE.getTime())/86400000);
-    if (diff<0||diff>=56) return null;
+    if (diff<0||diff>=57) return null;
     const weekNum = Math.floor(diff/7)+1;
     const key = dateKey(date);
     // Check for full workout override first
@@ -264,7 +277,7 @@ export default function HyroxCalendar() {
 
   function getWeekNumber(date: Date): number | null {
     const diff = Math.floor((date.getTime()-START_DATE.getTime())/86400000);
-    if (diff<0||diff>=56) return null;
+    if (diff<0||diff>=57) return null;
     return Math.floor(diff/7)+1;
   }
 
@@ -521,13 +534,18 @@ export default function HyroxCalendar() {
     );
 
     return (
-      <div style={{display:"grid",gridTemplateColumns:"1fr 380px",height:"calc(100vh - 56px)"}}>
+      <div style={bp.isMobile
+        ? {display:"flex",flexDirection:"column",height:"calc(100vh - 44px)",overflow:"hidden"}
+        : {display:"grid",gridTemplateColumns:`1fr ${bp.isTablet?"320px":"380px"}`,height:"calc(100vh - 56px)"}
+      }>
         {/* Left: workout detail */}
-        <div style={{overflowY:"auto",padding:"20px 24px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
-            <button onClick={()=>setSelectedDate(null)} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:"5px 12px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← BACK</button>
-            <div style={{fontFamily:"Barlow Condensed",fontSize:12,letterSpacing:"0.18em",color:"#444"}}>
-              WEEK {wn} // {date.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}).toUpperCase()}
+        <div style={{overflowY:"auto",padding:bp.isMobile?"14px 12px":"20px 24px",flex:bp.isMobile?1:undefined}}>
+          <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?8:12,marginBottom:bp.isMobile?14:20}}>
+            <button onClick={()=>setSelectedDate(null)} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:"5px 12px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em",flexShrink:0}}>← BACK</button>
+            <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?10:12,letterSpacing:"0.18em",color:"#444",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              WEEK {wn} // {bp.isMobile
+                ? date.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()
+                : date.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}).toUpperCase()}
               {isToday&&<span style={{marginLeft:8,color:"#FF6B35",fontSize:9}}>● TODAY</span>}
               {workout.isOverridden&&<span style={{marginLeft:8,color:"#C084FC",fontSize:9}}>⚡ AI MODIFIED</span>}
             </div>
@@ -536,29 +554,29 @@ export default function HyroxCalendar() {
           {/* Main workout card */}
           <div style={{background:"#0D0D0D",border:`1px solid ${meta.color}44`,borderRadius:8,overflow:"hidden",marginBottom:14}}>
             <div style={{height:4,background:meta.color}} />
-            <div style={{padding:"18px 22px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-                <div>
+            <div style={{padding:bp.isMobile?"14px 14px":"18px 22px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:bp.isMobile?10:14,gap:8}}>
+                <div style={{minWidth:0}}>
                   <div style={{fontSize:9,letterSpacing:"0.2em",color:"#444",marginBottom:3}}>{meta.icon} {meta.label}</div>
-                  <div style={{fontFamily:"Barlow Condensed",fontSize:28,fontWeight:900,color:"#E8E8E0",lineHeight:1}}>{workout.title}</div>
+                  <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?22:28,fontWeight:900,color:"#E8E8E0",lineHeight:1}}>{workout.title}</div>
                 </div>
-                {log?.status&&<div style={{background:statusColor(log.status)+"22",border:`1px solid ${statusColor(log.status)}`,borderRadius:4,padding:"3px 9px",fontSize:9,color:statusColor(log.status)!,letterSpacing:"0.1em"}}>{log.status==="yes"?"✓ DONE":log.status==="partial"?"½ PARTIAL":"✗ MISSED"}</div>}
+                {log?.status&&<div style={{background:statusColor(log.status)+"22",border:`1px solid ${statusColor(log.status)}`,borderRadius:4,padding:"3px 9px",fontSize:9,color:statusColor(log.status)!,letterSpacing:"0.1em",whiteSpace:"nowrap",flexShrink:0}}>{log.status==="yes"?"✓ DONE":log.status==="partial"?"½ PARTIAL":"✗ MISSED"}</div>}
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:14}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:bp.isMobile?6:8,marginBottom:bp.isMobile?10:14}}>
                 {([["SETS",workout.sets],["PACE",workout.pace],["REST",workout.rest],["HR (bpm)",workout.hr]] as const).map(([l,v])=>(
-                  <div key={l} style={{background:"#111",borderRadius:4,padding:"9px 12px"}}>
+                  <div key={l} style={{background:"#111",borderRadius:4,padding:bp.isMobile?"7px 10px":"9px 12px"}}>
                     <div style={{fontSize:8,letterSpacing:"0.2em",color:"#444",marginBottom:3}}>{l}</div>
-                    <div style={{fontSize:11,color:"#CCC"}}>{v}</div>
+                    <div style={{fontSize:bp.isMobile?10:11,color:"#CCC"}}>{v}</div>
                   </div>
                 ))}
               </div>
-              <div style={{fontSize:11,color:"#777",lineHeight:1.8,borderTop:"1px solid #161616",paddingTop:12}}>{workout.notes}</div>
+              <div style={{fontSize:bp.isMobile?10:11,color:"#777",lineHeight:1.8,borderTop:"1px solid #161616",paddingTop:12}}>{workout.notes}</div>
             </div>
           </div>
 
           {/* Feedback */}
           {(isPast||isToday)&&(
-            <div style={{background:"#0D0D0D",border:"1px solid #1a1a1a",borderRadius:8,padding:"16px 18px",marginBottom:14}}>
+            <div style={{background:"#0D0D0D",border:"1px solid #1a1a1a",borderRadius:8,padding:bp.isMobile?"12px 14px":"16px 18px",marginBottom:14}}>
               <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:"#444",marginBottom:12}}>LOG WORKOUT</div>
               {log?.feedback?(
                 <div>
@@ -578,12 +596,31 @@ export default function HyroxCalendar() {
               )}
             </div>
           )}
+
+          {/* Mobile: chat toggle button */}
+          {bp.isMobile && (
+            <button onClick={()=>setShowMobileChat(true)} style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:6,color:"#888",cursor:"pointer",padding:"12px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              💬 ASK AI COACH
+            </button>
+          )}
         </div>
 
-        {/* Right: chat */}
-        <div style={{borderLeft:"1px solid #161616",display:"flex",flexDirection:"column",height:"100%"}}>
-          <ChatPanel mode={chatMode} dateStr={key} />
-        </div>
+        {/* Right: chat — desktop/tablet inline, mobile fullscreen overlay */}
+        {bp.isMobile ? (
+          showMobileChat && (
+            <div className="mobile-chat-overlay">
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:"1px solid #161616",flexShrink:0}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:700,letterSpacing:"0.15em",color:"#666"}}>AI COACH</div>
+                <button onClick={()=>setShowMobileChat(false)} style={{background:"none",border:"1px solid #222",borderRadius:4,color:"#555",cursor:"pointer",padding:"4px 10px",fontSize:10,fontFamily:"Barlow Condensed"}}>✕ CLOSE</button>
+              </div>
+              <div style={{flex:1,overflow:"hidden"}}><ChatPanel mode={chatMode} dateStr={key} /></div>
+            </div>
+          )
+        ) : (
+          <div style={{borderLeft:"1px solid #161616",display:"flex",flexDirection:"column",height:"100%"}}>
+            <ChatPanel mode={chatMode} dateStr={key} />
+          </div>
+        )}
       </div>
     );
   }
@@ -599,46 +636,54 @@ export default function HyroxCalendar() {
         .cal-day:hover{border-color:#FF6B35!important;cursor:pointer;}
         .cal-day{transition:all 0.15s ease;}
         @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+        @media(max-width:639px){
+          .hide-mobile{display:none!important;}
+          .mobile-chat-overlay{position:fixed;inset:0;z-index:90;background:#090909;display:flex;flex-direction:column;}
+        }
       `}</style>
 
       {/* Top bar */}
-      <div style={{borderBottom:"1px solid #161616",padding:"10px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,height:56,flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"baseline",gap:12}}>
-          <div style={{fontFamily:"Barlow Condensed",fontSize:26,fontWeight:900,color:"#FF6B35",letterSpacing:"0.08em"}}>HYROX</div>
-          <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:"#282828"}}>ADAPTIVE TRAINING CALENDAR</div>
+      <div style={{borderBottom:"1px solid #161616",padding:bp.isMobile?"8px 12px":"10px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,minHeight:bp.isMobile?44:56,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:bp.isMobile?6:12}}>
+          <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?20:26,fontWeight:900,color:"#FF6B35",letterSpacing:"0.08em"}}>HYROX</div>
+          {!bp.isMobile && <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:"#282828"}}>ADAPTIVE TRAINING CALENDAR</div>}
         </div>
-        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-          {/* Plan chat button */}
+        <div style={{display:"flex",gap:bp.isMobile?6:10,alignItems:"center",flexWrap:"wrap"}}>
           <button
             onClick={()=>{setSelectedDate(null);setChatMode("plan");setView("planchat");}}
-            style={{background:view==="planchat"?"#C084FC22":"#111",border:`1px solid ${view==="planchat"?"#C084FC":"#222"}`,borderRadius:4,color:view==="planchat"?"#C084FC":"#555",cursor:"pointer",padding:"5px 12px",fontSize:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
+            style={{background:view==="planchat"?"#C084FC22":"#111",border:`1px solid ${view==="planchat"?"#C084FC":"#222"}`,borderRadius:4,color:view==="planchat"?"#C084FC":"#555",cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
           >
-            📋 ADJUST FULL PLAN
+            📋 {bp.isMobile?"PLAN":"ADJUST FULL PLAN"}
           </button>
-          <div style={{fontSize:9,color:"#333",letterSpacing:"0.1em"}}>
-            {Object.values(workoutLog).filter(l=>l.status==="yes").length} DONE ·&nbsp;
-            {Object.keys(progressionOverrides).length} WK OVERRIDES ·&nbsp;
-            {Object.keys(workoutOverrides).length} DAY OVERRIDES
-          </div>
+          {!bp.isMobile && (
+            <div style={{fontSize:9,color:"#333",letterSpacing:"0.1em"}}>
+              {Object.values(workoutLog).filter(l=>l.status==="yes").length} DONE ·&nbsp;
+              {Object.keys(progressionOverrides).length} WK OVERRIDES ·&nbsp;
+              {Object.keys(workoutOverrides).length} DAY OVERRIDES
+            </div>
+          )}
         </div>
       </div>
 
       {/* Plan-level chat view */}
       {view==="planchat" && !selectedDate && (
-        <div style={{display:"grid",gridTemplateColumns:"1fr 420px",height:"calc(100vh - 56px)"}}>
-          <div style={{overflowY:"auto",padding:"20px 24px"}}>
-            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18}}>
+        <div style={bp.isMobile
+          ? {display:"flex",flexDirection:"column",height:"calc(100vh - 44px)"}
+          : {display:"grid",gridTemplateColumns:`1fr ${bp.isTablet?"320px":"420px"}`,height:"calc(100vh - 56px)"}
+        }>
+          <div style={{overflowY:"auto",padding:bp.isMobile?"14px 12px":"20px 24px",flex:bp.isMobile?1:undefined}}>
+            <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?8:12,marginBottom:bp.isMobile?12:18}}>
               <button onClick={()=>setView("calendar")} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:"5px 12px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← CALENDAR</button>
-              <div style={{fontFamily:"Barlow Condensed",fontSize:16,fontWeight:900,letterSpacing:"0.15em",color:"#C084FC"}}>FULL PLAN ADJUSTMENTS</div>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?13:16,fontWeight:900,letterSpacing:"0.15em",color:"#C084FC"}}>FULL PLAN{!bp.isMobile && " ADJUSTMENTS"}</div>
             </div>
             {/* Week overview */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+            <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:bp.isMobile?6:8}}>
               {Array.from({length:8},(_,i)=>i+1).map(w=>{
                 const p=weekProfile(w);
                 const po=progressionOverrides[w];
                 return(
-                  <div key={w} style={{background:"#0D0D0D",border:`1px solid ${po?"#C084FC33":p.deload?"#4ECDC433":p.raceWeek?"#FF6B3544":"#161616"}`,borderRadius:6,padding:"12px 14px"}}>
-                    <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.1em",color:p.deload?"#4ECDC4":p.raceWeek?"#FF6B35":"#666",marginBottom:6}}>
+                  <div key={w} style={{background:"#0D0D0D",border:`1px solid ${po?"#C084FC33":p.deload?"#4ECDC433":p.raceWeek?"#FF6B3544":"#161616"}`,borderRadius:6,padding:bp.isMobile?"10px 10px":"12px 14px"}}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?10:11,fontWeight:700,letterSpacing:"0.1em",color:p.deload?"#4ECDC4":p.raceWeek?"#FF6B35":"#666",marginBottom:bp.isMobile?4:6}}>
                       WK {w} {p.deload?"/ DELOAD":p.raceWeek?"/ RACE":""}
                     </div>
                     <div style={{fontSize:9,color:"#444",lineHeight:1.7}}>
@@ -654,25 +699,44 @@ export default function HyroxCalendar() {
                 );
               })}
             </div>
+
+            {/* Mobile: chat toggle button */}
+            {bp.isMobile && (
+              <button onClick={()=>setShowMobileChat(true)} style={{width:"100%",background:"#111",border:"1px solid #C084FC44",borderRadius:6,color:"#C084FC",cursor:"pointer",padding:"12px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",marginTop:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                💬 ASK ABOUT PLAN
+              </button>
+            )}
           </div>
-          <div style={{borderLeft:"1px solid #161616",height:"100%"}}>
-            <ChatPanel mode="plan" />
-          </div>
+          {bp.isMobile ? (
+            showMobileChat && (
+              <div className="mobile-chat-overlay">
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:"1px solid #161616",flexShrink:0}}>
+                  <div style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:700,letterSpacing:"0.15em",color:"#C084FC"}}>PLAN CHAT</div>
+                  <button onClick={()=>setShowMobileChat(false)} style={{background:"none",border:"1px solid #222",borderRadius:4,color:"#555",cursor:"pointer",padding:"4px 10px",fontSize:10,fontFamily:"Barlow Condensed"}}>✕ CLOSE</button>
+                </div>
+                <div style={{flex:1,overflow:"hidden"}}><ChatPanel mode="plan" /></div>
+              </div>
+            )
+          ) : (
+            <div style={{borderLeft:"1px solid #161616",height:"100%"}}>
+              <ChatPanel mode="plan" />
+            </div>
+          )}
         </div>
       )}
 
       {/* Calendar view */}
       {view==="calendar" && !selectedDate && (
-        <div style={{padding:"18px 20px"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-            <button onClick={()=>{if(currentMonth===0){setCurrentMonth(11);setCurrentYear(y=>y-1);}else setCurrentMonth(m=>m-1);}} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:"5px 14px",fontFamily:"Barlow Condensed",fontSize:14}}>‹</button>
-            <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,letterSpacing:"0.15em"}}>{MONTHS[currentMonth].toUpperCase()} {currentYear}</div>
-            <button onClick={()=>{if(currentMonth===11){setCurrentMonth(0);setCurrentYear(y=>y+1);}else setCurrentMonth(m=>m+1);}} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:"5px 14px",fontFamily:"Barlow Condensed",fontSize:14}}>›</button>
+        <div style={{padding:bp.isMobile?"10px 8px":"18px 20px"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:bp.isMobile?10:16}}>
+            <button onClick={()=>{if(currentMonth===0){setCurrentMonth(11);setCurrentYear(y=>y-1);}else setCurrentMonth(m=>m-1);}} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:bp.isMobile?"4px 10px":"5px 14px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?12:14}}>‹</button>
+            <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?16:20,fontWeight:900,letterSpacing:"0.15em"}}>{MONTHS[currentMonth].toUpperCase()} {currentYear}</div>
+            <button onClick={()=>{if(currentMonth===11){setCurrentMonth(0);setCurrentYear(y=>y+1);}else setCurrentMonth(m=>m+1);}} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:bp.isMobile?"4px 10px":"5px 14px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?12:14}}>›</button>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
-            {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:8,letterSpacing:"0.2em",color:"#2a2a2a",padding:"3px 0"}}>{d}</div>)}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:bp.isMobile?2:3,marginBottom:bp.isMobile?2:3}}>
+            {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:bp.isMobile?7:8,letterSpacing:"0.2em",color:"#2a2a2a",padding:"3px 0"}}>{bp.isMobile?d.charAt(0):d}</div>)}
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:bp.isMobile?2:3}}>
             {calDays.map((date,i)=>{
               if(!date)return<div key={i}/>;
               const workout=getWorkoutForDate(date);
@@ -683,42 +747,50 @@ export default function HyroxCalendar() {
               const wn=getWeekNumber(date);
               const hasOverride=!!workoutOverrides[key];
               return(
-                <div key={i} className="cal-day" onClick={()=>{setSelectedDate(date);setChatMode("day");setView("calendar");}} style={{border:"1px solid",borderColor:isToday?"#FF6B35":"#141414",borderRadius:5,minHeight:80,padding:"7px 7px 5px",background:isToday?"#0F0A07":"#0B0B0B",position:"relative",opacity:!workout&&!isToday?0.35:1}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                    <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:700,color:isToday?"#FF6B35":"#444",lineHeight:1}}>{date.getDate()}</div>
-                    {wn&&<div style={{fontSize:6,color:"#1e1e1e",letterSpacing:"0.1em"}}>W{wn}</div>}
+                <div key={i} className="cal-day" onClick={()=>{setSelectedDate(date);setChatMode("day");setShowMobileChat(false);setView("calendar");}} style={{border:"1px solid",borderColor:isToday?"#FF6B35":"#141414",borderRadius:bp.isMobile?3:5,minHeight:bp.isMobile?54:80,padding:bp.isMobile?"4px 4px 3px":"7px 7px 5px",background:isToday?"#0F0A07":"#0B0B0B",position:"relative",opacity:!workout&&!isToday?0.35:1}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:bp.isMobile?2:4}}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?11:14,fontWeight:700,color:isToday?"#FF6B35":"#444",lineHeight:1}}>{date.getDate()}</div>
+                    {wn&&!bp.isMobile&&<div style={{fontSize:6,color:"#1e1e1e",letterSpacing:"0.1em"}}>W{wn}</div>}
                   </div>
                   {workout&&meta&&(
                     <>
-                      <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:3}}>
-                        <div style={{width:5,height:5,borderRadius:"50%",background:hasOverride?"#C084FC":meta.color,flexShrink:0}}/>
-                        {hasOverride&&<div style={{width:4,height:4,borderRadius:"50%",background:"#C084FC55"}}/>}
+                      <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?2:4,marginBottom:bp.isMobile?1:3}}>
+                        <div style={{width:bp.isMobile?4:5,height:bp.isMobile?4:5,borderRadius:"50%",background:hasOverride?"#C084FC":meta.color,flexShrink:0}}/>
+                        {hasOverride&&<div style={{width:bp.isMobile?3:4,height:bp.isMobile?3:4,borderRadius:"50%",background:"#C084FC55"}}/>}
                       </div>
-                      <div style={{fontFamily:"Barlow Condensed",fontSize:10,fontWeight:700,color:"#777",lineHeight:1.2,marginBottom:3}}>{meta.icon} {workout.title.length>16?workout.title.slice(0,15)+"…":workout.title}</div>
-                      <div style={{fontSize:8,color:"#333",lineHeight:1.3}}>{workout.sets.length>13?workout.sets.slice(0,12)+"…":workout.sets}</div>
-                      {log?.status&&<div style={{position:"absolute",top:5,right:5,width:7,height:7,borderRadius:"50%",background:statusColor(log.status)!}}/>}
+                      {bp.isMobile ? (
+                        <div style={{fontFamily:"Barlow Condensed",fontSize:8,fontWeight:700,color:"#777",lineHeight:1.1}}>{meta.icon}</div>
+                      ) : (
+                        <>
+                          <div style={{fontFamily:"Barlow Condensed",fontSize:10,fontWeight:700,color:"#777",lineHeight:1.2,marginBottom:3}}>{meta.icon} {workout.title.length>16?workout.title.slice(0,15)+"…":workout.title}</div>
+                          <div style={{fontSize:8,color:"#333",lineHeight:1.3}}>{workout.sets.length>13?workout.sets.slice(0,12)+"…":workout.sets}</div>
+                        </>
+                      )}
+                      {log?.status&&<div style={{position:"absolute",top:bp.isMobile?3:5,right:bp.isMobile?3:5,width:bp.isMobile?5:7,height:bp.isMobile?5:7,borderRadius:"50%",background:statusColor(log.status)!}}/>}
                     </>
                   )}
                 </div>
               );
             })}
           </div>
-          <div style={{marginTop:16,display:"flex",flexWrap:"wrap",gap:12,borderTop:"1px solid #111",paddingTop:14}}>
-            {Object.entries(TYPE_META).map(([k,v])=>(
-              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
-                <div style={{width:6,height:6,borderRadius:"50%",background:v.color}}/>
-                <span style={{fontSize:8,color:"#383838",letterSpacing:"0.1em"}}>{v.icon} {v.label}</span>
-              </div>
-            ))}
-            <div style={{display:"flex",gap:10,marginLeft:"auto"}}>
-              {([["#34D399","DONE"],["#FFE66D","PARTIAL"],["#F87171","MISSED"],["#C084FC","AI MODIFIED"]] as const).map(([c,l])=>(
-                <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
-                  <div style={{width:6,height:6,borderRadius:"50%",background:c}}/>
-                  <span style={{fontSize:8,color:"#383838",letterSpacing:"0.1em"}}>{l}</span>
+          {!bp.isMobile && (
+            <div style={{marginTop:16,display:"flex",flexWrap:"wrap",gap:12,borderTop:"1px solid #111",paddingTop:14}}>
+              {Object.entries(TYPE_META).map(([k,v])=>(
+                <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                  <div style={{width:6,height:6,borderRadius:"50%",background:v.color}}/>
+                  <span style={{fontSize:8,color:"#383838",letterSpacing:"0.1em"}}>{v.icon} {v.label}</span>
                 </div>
               ))}
+              <div style={{display:"flex",gap:10,marginLeft:"auto"}}>
+                {([["#34D399","DONE"],["#FFE66D","PARTIAL"],["#F87171","MISSED"],["#C084FC","AI MODIFIED"]] as const).map(([c,l])=>(
+                  <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
+                    <div style={{width:6,height:6,borderRadius:"50%",background:c}}/>
+                    <span style={{fontSize:8,color:"#383838",letterSpacing:"0.1em"}}>{l}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
