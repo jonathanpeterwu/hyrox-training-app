@@ -267,6 +267,36 @@ function parseAIResponse(text: string): ParsedResponse {
   return { cleanText, workoutUpdate, progressionUpdate };
 }
 
+// ─── HR ZONE CALCULATORS ──────────────────────────────────────────────────────
+function zonesFromMaxHr(maxHr: number): HRZones {
+  // Standard zone percentages based on %maxHR (Karvonen-aligned)
+  const thresholdHr = Math.round(maxHr * 0.908); // ~90.8% of max (LT2)
+  return {
+    maxHr,
+    thresholdHr,
+    z5Low: thresholdHr,                            // Z5 starts at threshold
+    z5High: Math.round(maxHr * 0.984),             // Z5 top ~98% max
+    z3Low: Math.round(maxHr * 0.73),               // Z3 low ~73% max
+    z3High: Math.round(maxHr * 0.838),             // Z3 high ~84% max
+    z2Max: Math.round(maxHr * 0.73),               // Z2 ceiling = Z3 floor
+  };
+}
+
+function zonesFromThreshold(thr: number, currentMax: number): HRZones {
+  // Derive max from threshold (~90.8% of max), or keep current max if it's higher
+  const derivedMax = Math.round(thr / 0.908);
+  const maxHr = Math.max(derivedMax, currentMax > thr ? currentMax : derivedMax);
+  return {
+    maxHr,
+    thresholdHr: thr,
+    z5Low: thr,
+    z5High: Math.round(maxHr * 0.984),
+    z3Low: Math.round(maxHr * 0.73),
+    z3High: Math.round(maxHr * 0.838),
+    z2Max: Math.round(maxHr * 0.73),
+  };
+}
+
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 // ─── LOCALSTORAGE HELPERS ─────────────────────────────────────────────────────
 interface HRZones {
@@ -938,6 +968,48 @@ export default function HyroxCalendar() {
             {/* HR Zones */}
             <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
               <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>HR ZONES</div>
+
+              {/* Auto-fill section */}
+              <div style={{background:t.bgInput,borderRadius:6,padding:"14px 16px",marginBottom:16,border:`1px solid ${t.borderLight}`}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:11,letterSpacing:"0.12em",color:"#FF6B35",marginBottom:12}}>QUICK SETUP — auto-calculate zones</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:12}}>
+                  <div>
+                    <div style={{...labelStyle,fontSize:9}}>AGE</div>
+                    <input type="number" placeholder="e.g. 30" onChange={e=>{
+                      const age=parseInt(e.target.value);
+                      if(!isNaN(age)&&age>10&&age<100){
+                        const maxHr=220-age;
+                        const zones=zonesFromMaxHr(maxHr);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                      }
+                    }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
+                  </div>
+                  <div>
+                    <div style={{...labelStyle,fontSize:9,color:"#F87171"}}>MAX HR</div>
+                    <input type="number" placeholder={String(hrZones.maxHr)} onChange={e=>{
+                      const maxHr=parseInt(e.target.value);
+                      if(!isNaN(maxHr)&&maxHr>100&&maxHr<230){
+                        const zones=zonesFromMaxHr(maxHr);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                      }
+                    }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
+                  </div>
+                  <div>
+                    <div style={{...labelStyle,fontSize:9,color:"#FF6B35"}}>THRESHOLD HR</div>
+                    <input type="number" placeholder={String(hrZones.thresholdHr)} onChange={e=>{
+                      const thr=parseInt(e.target.value);
+                      if(!isNaN(thr)&&thr>100&&thr<230){
+                        const zones=zonesFromThreshold(thr,hrZones.maxHr);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                      }
+                    }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
+                  </div>
+                </div>
+                <div style={{fontSize:10,color:t.textGhost,lineHeight:1.5}}>
+                  Enter any value to auto-fill all zones. Fine-tune individual zones below.
+                </div>
+              </div>
+
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
                 {([
                   ["maxHr","MAX HR","#F87171"],
@@ -966,10 +1038,10 @@ export default function HyroxCalendar() {
               </div>
               <div style={{marginTop:16,padding:"12px 14px",background:t.bgInput,borderRadius:6,fontSize:12,color:t.textMuted,lineHeight:1.7}}>
                 <div style={{fontFamily:"Barlow Condensed",fontSize:11,letterSpacing:"0.1em",color:t.textFaint,marginBottom:6}}>ZONE SUMMARY</div>
-                <div><span style={{color:"#60A5FA"}}>Z2:</span> &lt;{hrZones.z2Max} bpm</div>
-                <div><span style={{color:isDark?"#FFE66D":"#B8860B"}}>Z3:</span> {hrZones.z3Low}–{hrZones.z3High} bpm</div>
-                <div><span style={{color:"#F97316"}}>Z5:</span> {hrZones.z5Low}–{hrZones.z5High} bpm</div>
-                <div><span style={{color:"#FF6B35"}}>Threshold:</span> {hrZones.thresholdHr} bpm</div>
+                <div><span style={{color:"#60A5FA"}}>Z2:</span> &lt;{hrZones.z2Max} bpm ({Math.round(hrZones.z2Max/hrZones.maxHr*100)}% max)</div>
+                <div><span style={{color:isDark?"#FFE66D":"#B8860B"}}>Z3:</span> {hrZones.z3Low}–{hrZones.z3High} bpm ({Math.round(hrZones.z3Low/hrZones.maxHr*100)}–{Math.round(hrZones.z3High/hrZones.maxHr*100)}%)</div>
+                <div><span style={{color:"#F97316"}}>Z5:</span> {hrZones.z5Low}–{hrZones.z5High} bpm ({Math.round(hrZones.z5Low/hrZones.maxHr*100)}–{Math.round(hrZones.z5High/hrZones.maxHr*100)}%)</div>
+                <div><span style={{color:"#FF6B35"}}>Threshold:</span> {hrZones.thresholdHr} bpm ({Math.round(hrZones.thresholdHr/hrZones.maxHr*100)}% max)</div>
                 <div><span style={{color:"#F87171"}}>Max:</span> {hrZones.maxHr} bpm</div>
               </div>
             </div>
