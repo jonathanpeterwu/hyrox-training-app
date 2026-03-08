@@ -120,9 +120,14 @@ interface Adjustments {
 interface Feedback {
   rpe: number;
   hrAvg: number | null;
+  hrMax: number | null;
   hrTarget: number | null;
+  hrTargetLow: number | null;
+  paceAvg: string;
+  paceTarget: string;
   completed: string;
   notes: string;
+  workoutType: string;
 }
 
 interface LogEntry {
@@ -135,7 +140,17 @@ interface LogEntry {
     hrMax?: number | null;
     paceAvg?: string;
   };
-  adjustments?: { fatigue: number; performance: number };
+  adjustments?: {
+    fatigue: number;
+    performance: number;
+    breakdown: {
+      rpeScore: number;
+      hrScore: number;
+      paceScore: number;
+      completionScore: number;
+      sentimentScore: number;
+    };
+  };
 }
 
 interface ParsedResponse {
@@ -241,15 +256,134 @@ function buildLongRun(w: number,vm: number,deload: boolean,raceWeek: boolean): W
   return{type:"longrun",title:"Long Aerobic Run",sets:`${mins} min`,pace:deload?"9:30–10:15/mi":"8:45–9:30/mi",rest:"—",hr:"140–162",notes:`Z2 first ${Math.round(mins*0.7)} min, Z3 drift final ${Math.round(mins*0.3)} min.`};
 }
 
+// Parse pace string "8:30" → seconds per mile
+function paceToSeconds(pace: string): number | null {
+  const match = pace.match(/(\d+):(\d+)/);
+  if (!match) return null;
+  return parseInt(match[1]) * 60 + parseInt(match[2]);
+}
+
+// Get midpoint of a pace range like "7:20–7:45/mi"
+function parsePaceRange(paceStr: string): { low: number | null; high: number | null; mid: number | null } {
+  const parts = paceStr.replace(/\/mi/gi, "").split(/[–-]/);
+  const low = paceToSeconds(parts[0]?.trim());
+  const high = parts[1] ? paceToSeconds(parts[1]?.trim()) : low;
+  return { low, high, mid: low && high ? (low + high) / 2 : low };
+}
+
 function processFeedback(fb: Feedback) {
-  const {rpe=5,hrAvg=null,hrTarget=null,completed="yes",notes=""}=fb;
-  let fatigue=rpe, performance=10-rpe+2;
-  if(hrAvg&&hrTarget){const d=hrAvg-hrTarget;if(d>8){fatigue+=1.5;performance-=1;}else if(d<-8){fatigue-=1;performance+=1;}}
-  if(completed==="partial"){fatigue+=1;performance-=1;}
-  if(completed==="no"){fatigue+=2;performance-=2;}
-  ["exhausted","sore","struggled","dying","heavy","tired"].forEach(k=>{if(notes.toLowerCase().includes(k))fatigue+=0.5;});
-  ["strong","easy","felt great","crushed","solid","good"].forEach(k=>{if(notes.toLowerCase().includes(k)){fatigue-=0.3;performance+=0.3;}});
-  return{fatigue:Math.max(1,Math.min(10,Math.round(fatigue*10)/10)),performance:Math.max(1,Math.min(10,Math.round(performance*10)/10))};
+  const { rpe = 5, hrAvg = null, hrMax = null, hrTarget = null, hrTargetLow = null, paceAvg = "", paceTarget = "", completed = "yes", notes = "", workoutType = "" } = fb;
+
+  // ── 1. RPE Score (0–10 scale, higher = more fatigued) ──
+  // RPE is the primary signal — weight: 40%
+  const rpeScore = rpe;
+
+  // ── 2. HR Score (0–10 scale) ──
+  // Compare avg HR to target zone. Being above zone = more fatigue. Below = less.
+  let hrScore = 5; // neutral default
+  if (hrAvg && hrTarget) {
+    const targetMid = hrTargetLow ? (hrTargetLow + hrTarget) / 2 : hrTarget - 5;
+    const deviation = hrAvg - targetMid;
+    const zoneWidth = hrTargetLow ? (hrTarget - hrTargetLow) : 10;
+
+    if (deviation > zoneWidth) {
+      // Way above target zone — high cardiac stress
+      hrScore = Math.min(10, 7 + (deviation - zoneWidth) / 5);
+    } else if (deviation > 0) {
+      // Above midpoint but within zone — moderate
+      hrScore = 5 + (deviation / zoneWidth) * 2;
+    } else if (deviation > -zoneWidth) {
+      // Below midpoint but near zone — good control
+      hrScore = 3 + (1 + deviation / zoneWidth) * 2;
+    } else {
+      // Well below zone — either easy effort or strong fitness
+      hrScore = Math.max(1, 3 + deviation / 10);
+    }
+
+    // Max HR spike penalty: if max HR exceeds target ceiling by >10bpm, add fatigue
+    if (hrMax && hrMax > hrTarget + 10) {
+      hrScore = Math.min(10, hrScore + (hrMax - hrTarget - 10) / 8);
+    }
+  }
+
+  // ── 3. Pace Score (0–10 scale) ──
+  // Faster than target = better performance. Slower = higher fatigue signal.
+  let paceScore = 5; // neutral default
+  const actualPace = paceToSeconds(paceAvg);
+  const targetPace = parsePaceRange(paceTarget);
+  if (actualPace && targetPace.mid) {
+    const diff = actualPace - targetPace.mid; // positive = slower than target
+    const range = targetPace.high && targetPace.low ? (targetPace.high - targetPace.low) : 30;
+
+    if (diff > range) {
+      // Much slower than target — struggling
+      paceScore = Math.min(10, 7 + (diff - range) / 20);
+    } else if (diff > 0) {
+      // Slightly slower — moderate fatigue
+      paceScore = 5 + (diff / range) * 2;
+    } else if (diff > -range) {
+      // Faster than target — strong performance
+      paceScore = 3 + (1 + diff / range) * 2;
+    } else {
+      // Much faster — exceptional
+      paceScore = Math.max(1, 2 + diff / 30);
+    }
+  }
+
+  // ── 4. Completion Score ──
+  let completionScore = 5;
+  if (completed === "yes") completionScore = 3;
+  if (completed === "partial") completionScore = 7;
+  if (completed === "no") completionScore = 9;
+
+  // ── 5. Sentiment Score from notes ──
+  let sentimentScore = 5;
+  const lowerNotes = notes.toLowerCase();
+  const fatigueWords = ["exhausted", "sore", "struggled", "dying", "heavy", "tired", "sluggish", "flat", "cramping", "painful", "awful", "terrible", "bonked"];
+  const freshWords = ["strong", "easy", "felt great", "crushed", "solid", "good", "fresh", "fast", "smooth", "effortless", "controlled", "nailed"];
+  let fatigueHits = 0, freshHits = 0;
+  fatigueWords.forEach(k => { if (lowerNotes.includes(k)) fatigueHits++; });
+  freshWords.forEach(k => { if (lowerNotes.includes(k)) freshHits++; });
+  sentimentScore = Math.max(1, Math.min(10, 5 + fatigueHits * 1.5 - freshHits * 1.2));
+
+  // ── Weighted composite ──
+  // Weights vary by workout type — HR matters more for cardio, RPE more for strength
+  const isCardio = ["threshold", "subthresh", "z2", "longrun", "hyrox"].includes(workoutType);
+  const hasHr = hrAvg !== null;
+  const hasPace = actualPace !== null && targetPace.mid !== null;
+
+  let wRpe = 0.40, wHr = 0.25, wPace = 0.15, wComp = 0.10, wSent = 0.10;
+  if (isCardio && hasHr) { wRpe = 0.30; wHr = 0.30; wPace = hasPace ? 0.20 : 0; wComp = 0.10; wSent = 0.10; }
+  if (!hasHr) { wRpe += wHr; wHr = 0; }
+  if (!hasPace) { wRpe += wPace; wPace = 0; }
+  // Normalize weights
+  const wTotal = wRpe + wHr + wPace + wComp + wSent;
+  wRpe /= wTotal; wHr /= wTotal; wPace /= wTotal; wComp /= wTotal; wSent /= wTotal;
+
+  const compositeStress = rpeScore * wRpe + hrScore * wHr + paceScore * wPace + completionScore * wComp + sentimentScore * wSent;
+
+  // Fatigue: directly from composite (higher stress = higher fatigue)
+  const fatigue = Math.max(1, Math.min(10, Math.round(compositeStress * 10) / 10));
+
+  // Performance: inverse relationship but offset —
+  // Low stress + completed = high performance (adapted well)
+  // High stress + completed = moderate performance (pushed hard, may need recovery)
+  // High stress + incomplete = low performance
+  let performance = Math.max(1, Math.min(10, Math.round((11 - compositeStress) * 10) / 10));
+  // Bonus: if you completed the workout with low RPE and good HR control, you're adapting well
+  if (completed === "yes" && rpe <= 5 && hrScore <= 5) performance = Math.min(10, performance + 1);
+  // Bonus: faster than target pace while keeping HR in zone = strong performance
+  if (hasPace && paceScore < 4 && hasHr && hrScore < 6) performance = Math.min(10, performance + 0.8);
+
+  const breakdown = {
+    rpeScore: Math.round(rpeScore * 10) / 10,
+    hrScore: Math.round(hrScore * 10) / 10,
+    paceScore: Math.round(paceScore * 10) / 10,
+    completionScore: Math.round(completionScore * 10) / 10,
+    sentimentScore: Math.round(sentimentScore * 10) / 10,
+  };
+
+  return { fatigue: Math.round(fatigue * 10) / 10, performance: Math.round(performance * 10) / 10, breakdown };
 }
 
 // ─── SYSTEM PROMPT (built dynamically based on athlete level) ────────────────
@@ -480,15 +614,19 @@ export default function HyroxCalendar() {
   // Keyboard shortcuts: D/W/M for calendar modes
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Don't fire when typing in inputs
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      // Don't fire when typing in inputs, textareas, selects, or contentEditable
+      const el = e.target as HTMLElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return;
+      if (el.isContentEditable) return;
+      // Don't fire when a workout day view or chat panel is active
+      if (selectedDate || view === "planchat" || showMobileChat) return;
       if (e.key === "d" || e.key === "D") { setCalendarMode("day"); setView("calendar"); setSelectedDate(null); }
       if (e.key === "w" || e.key === "W") { setCalendarMode("week"); setView("calendar"); setSelectedDate(null); }
       if (e.key === "m" || e.key === "M") { setCalendarMode("month"); setView("calendar"); setSelectedDate(null); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [selectedDate, view, showMobileChat]);
 
   const totalDays = programWeeks * 7 + 1; // +1 for opening Sunday
 
@@ -541,8 +679,22 @@ export default function HyroxCalendar() {
       paceAvg: feedbackForm.paceAvg||undefined,
     };
     const workout = getWorkoutForDate(keyToDate(dateStr));
-    const hrTarget = workout?.hr ? parseInt(workout.hr.split("–")[1])-5 : null;
-    const adj = processFeedback({...fb, hrTarget, rpe: fb.rpe, completed: fb.completed, notes: fb.notes});
+    // Parse HR target range from workout (e.g. "163–170" → low=163, high=170)
+    const hrParts = workout?.hr?.match(/(\d+)[–-](\d+)/);
+    const hrTargetLow = hrParts ? parseInt(hrParts[1]) : null;
+    const hrTarget = hrParts ? parseInt(hrParts[2]) : null;
+    const adj = processFeedback({
+      rpe: fb.rpe,
+      hrAvg: fb.hrAvg,
+      hrMax: fb.hrMax,
+      hrTarget,
+      hrTargetLow,
+      paceAvg: fb.paceAvg || "",
+      paceTarget: workout?.pace || "",
+      completed: fb.completed,
+      notes: fb.notes,
+      workoutType: workout?.type || "",
+    });
     setWorkoutLog(prev=>({...prev,[dateStr]:{...prev[dateStr],status:fb.completed,feedback:fb,adjustments:adj}}));
     setFeedbackModal(null);
     setFeedbackForm({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
@@ -894,9 +1046,38 @@ export default function HyroxCalendar() {
                     {log.feedback.hrMax&&<div><span style={{color:t.textFaint}}>Max HR: </span>{log.feedback.hrMax} bpm</div>}
                     {log.feedback.paceAvg&&<div><span style={{color:t.textFaint}}>Avg Pace: </span>{log.feedback.paceAvg}/mi</div>}
                     {log.feedback.notes&&<div><span style={{color:t.textFaint}}>Notes: </span>{log.feedback.notes}</div>}
-                    <div style={{marginTop:8,padding:"7px 10px",background:t.bgInput,borderRadius:4,fontSize:9,display:"flex",gap:16,flexWrap:"wrap"}}>
-                      <span style={{color:"#FF6B35"}}>Fatigue {log.adjustments?.fatigue}/10</span>
-                      <span style={{color:"#4ECDC4"}}>Perf {log.adjustments?.performance}/10</span>
+                    {/* Composite scores */}
+                    <div style={{marginTop:10,padding:"10px 12px",background:t.bgInput,borderRadius:6,border:`1px solid ${t.borderLight}`}}>
+                      <div style={{display:"flex",gap:16,marginBottom:8}}>
+                        <div>
+                          <div style={{fontSize:8,letterSpacing:"0.15em",color:t.textGhost,marginBottom:2}}>FATIGUE</div>
+                          <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,color:log.adjustments!.fatigue>=7?"#F87171":log.adjustments!.fatigue>=5?"#FFE66D":"#34D399"}}>{log.adjustments?.fatigue}</div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,letterSpacing:"0.15em",color:t.textGhost,marginBottom:2}}>PERFORMANCE</div>
+                          <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,color:log.adjustments!.performance>=7?"#34D399":log.adjustments!.performance>=5?"#FFE66D":"#F87171"}}>{log.adjustments?.performance}</div>
+                        </div>
+                      </div>
+                      {/* Breakdown bars */}
+                      {log.adjustments?.breakdown && (
+                        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                          {([
+                            ["RPE", log.adjustments.breakdown.rpeScore, "#FF6B35"],
+                            ["HR", log.adjustments.breakdown.hrScore, "#F97316"],
+                            ["PACE", log.adjustments.breakdown.paceScore, "#4ECDC4"],
+                            ["COMPLETION", log.adjustments.breakdown.completionScore, "#60A5FA"],
+                            ["SENTIMENT", log.adjustments.breakdown.sentimentScore, "#C084FC"],
+                          ] as [string, number, string][]).map(([label, score, color]) => (
+                            <div key={label} style={{display:"flex",alignItems:"center",gap:6}}>
+                              <div style={{fontSize:8,letterSpacing:"0.1em",color:t.textGhost,width:70,flexShrink:0}}>{label}</div>
+                              <div style={{flex:1,height:4,background:t.border,borderRadius:2,overflow:"hidden"}}>
+                                <div style={{width:`${score*10}%`,height:"100%",background:color,borderRadius:2,transition:"width 0.3s ease"}} />
+                              </div>
+                              <div style={{fontSize:9,color:t.textFaint,width:22,textAlign:"right"}}>{score}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button onClick={()=>setFeedbackModal(key)} style={{marginTop:10,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 10px",fontSize:9,fontFamily:"DM Mono",letterSpacing:"0.1em",width:"100%"}}>UPDATE</button>
