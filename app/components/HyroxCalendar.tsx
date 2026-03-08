@@ -378,7 +378,7 @@ export default function HyroxCalendar() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const bp = useBreakpoint();
 
-  // Load settings from localStorage on mount
+  // Load settings + persisted data from localStorage on mount
   useEffect(() => {
     const s = loadSettings();
     setStartDate(s.startDate);
@@ -387,7 +387,27 @@ export default function HyroxCalendar() {
     setThemeMode(s.themeMode);
     setCurrentMonth(s.startDate.getMonth());
     setCurrentYear(s.startDate.getFullYear());
+    // Load persisted data
+    try {
+      const log = localStorage.getItem("hyrox-workout-log");
+      if (log) setWorkoutLog(JSON.parse(log));
+      const wo = localStorage.getItem("hyrox-workout-overrides");
+      if (wo) setWorkoutOverrides(JSON.parse(wo));
+      const po = localStorage.getItem("hyrox-progression-overrides");
+      if (po) setProgressionOverrides(JSON.parse(po));
+      const dm = localStorage.getItem("hyrox-day-messages");
+      if (dm) setDayMessages(JSON.parse(dm));
+      const pm = localStorage.getItem("hyrox-plan-messages");
+      if (pm) setPlanMessages(JSON.parse(pm));
+    } catch { /* ignore corrupt data */ }
   }, []);
+
+  // Persist data changes to localStorage
+  useEffect(() => { try { localStorage.setItem("hyrox-workout-log", JSON.stringify(workoutLog)); } catch {} }, [workoutLog]);
+  useEffect(() => { try { localStorage.setItem("hyrox-workout-overrides", JSON.stringify(workoutOverrides)); } catch {} }, [workoutOverrides]);
+  useEffect(() => { try { localStorage.setItem("hyrox-progression-overrides", JSON.stringify(progressionOverrides)); } catch {} }, [progressionOverrides]);
+  useEffect(() => { try { localStorage.setItem("hyrox-day-messages", JSON.stringify(dayMessages)); } catch {} }, [dayMessages]);
+  useEffect(() => { try { localStorage.setItem("hyrox-plan-messages", JSON.stringify(planMessages)); } catch {} }, [planMessages]);
 
   // Keyboard shortcuts: D/W/M for calendar modes
   useEffect(() => {
@@ -488,6 +508,14 @@ export default function HyroxCalendar() {
       : planMessages.map(m=>({role:m.role,content:m.content}));
 
     const newUserMsg = { role:"user", content: userText + contextBlock };
+    const userDisplay: ChatMessage = { role:"user", content: userText };
+
+    // Show user message immediately in the chat UI
+    if (mode==="day" && dateStr) {
+      setDayMessages(prev=>({...prev,[dateStr]:[...(prev[dateStr]||[]),userDisplay]}));
+    } else {
+      setPlanMessages(prev=>[...prev, userDisplay]);
+    }
 
     try {
       const res = await fetch("/api/chat", {
@@ -508,17 +536,14 @@ export default function HyroxCalendar() {
       const parsed = parseAIResponse(rawText);
 
       const assistantMsg: ChatMessage = { role:"assistant", content: rawText, parsed };
-      const userDisplay: ChatMessage  = { role:"user", content: userText };
 
       if (mode==="day" && dateStr) {
-        setDayMessages(prev=>({...prev,[dateStr]:[...(prev[dateStr]||[]),userDisplay,assistantMsg]}));
-        // Apply workout override if present
+        setDayMessages(prev=>({...prev,[dateStr]:[...(prev[dateStr]||[]),assistantMsg]}));
         if (parsed.workoutUpdate) {
           setWorkoutOverrides(prev=>({...prev,[dateStr]:{...parsed.workoutUpdate!,aiGenerated:true}}));
         }
       } else {
-        setPlanMessages(prev=>[...prev, userDisplay, assistantMsg]);
-        // Apply progression overrides
+        setPlanMessages(prev=>[...prev, assistantMsg]);
         if (parsed.progressionUpdate?.weeklyAdjustments) {
           setProgressionOverrides(prev=>({...prev,...Object.fromEntries(
             Object.entries(parsed.progressionUpdate!.weeklyAdjustments).map(([k,v])=>[parseInt(k),v])
@@ -528,8 +553,8 @@ export default function HyroxCalendar() {
     } catch(e: unknown) {
       const errorMessage = e instanceof Error ? e.message : "Connection error.";
       const errMsg: ChatMessage = {role:"assistant",content:errorMessage,parsed:{cleanText:errorMessage,workoutUpdate:null,progressionUpdate:null}};
-      if(mode==="day" && dateStr) setDayMessages(prev=>({...prev,[dateStr]:[...(prev[dateStr]||[]),{role:"user",content:userText},errMsg]}));
-      else setPlanMessages(prev=>[...prev,{role:"user",content:userText},errMsg]);
+      if(mode==="day" && dateStr) setDayMessages(prev=>({...prev,[dateStr]:[...(prev[dateStr]||[]),errMsg]}));
+      else setPlanMessages(prev=>[...prev,errMsg]);
     }
     setChatLoading(false);
   }
