@@ -788,11 +788,67 @@ export default function HyroxCalendar() {
     const messages = mode==="day" ? (dayMessages[dateStr!]||[]) : planMessages;
     const hasOverride = dateStr && workoutOverrides[dateStr];
 
-    // Context-aware quick prompts based on workout type and athlete level
+    // Context-aware quick prompts based on workout type, logged status, and athlete level
     const currentWorkout = dateStr ? getWorkoutForDate(keyToDate(dateStr)) : null;
     const workoutType = currentWorkout?.type || "";
     const weekNum = currentWorkout?.weekNum || 0;
+    const dayLog = dateStr ? workoutLog[dateStr] : null;
+    const isLogged = !!dayLog?.feedback;
 
+    // ── POST-WORKOUT prompts (when feedback is logged) ──
+    const postWorkoutBase: string[] = [];
+    if (isLogged && dayLog?.adjustments) {
+      const { fatigue, performance, breakdown } = dayLog.adjustments;
+      // Recovery-focused prompts based on fatigue level
+      if (fatigue >= 7) {
+        postWorkoutBase.push(
+          "That was a tough session — what should I do for recovery tonight?",
+          "Should I scale back tomorrow's workout given this fatigue?",
+          "Am I at risk of overreaching? Review my recent sessions",
+        );
+      } else if (fatigue >= 5) {
+        postWorkoutBase.push(
+          "Good session — any recovery recommendations?",
+          "Should tomorrow's workout stay as planned or adjust?",
+        );
+      } else {
+        postWorkoutBase.push(
+          "That felt easy — should I push harder next time?",
+          "Am I training hard enough? Review my intensity this week",
+        );
+      }
+
+      // HR-specific prompts
+      if (breakdown?.hrScore >= 7) {
+        postWorkoutBase.push("My HR was high — is my threshold shifting or am I fatigued?");
+      } else if (breakdown?.hrScore <= 3 && dayLog.feedback?.hrAvg) {
+        postWorkoutBase.push("My HR was well below target — should I increase pace next time?");
+      }
+
+      // Pace-specific prompts
+      if (breakdown?.paceScore >= 7) {
+        postWorkoutBase.push("I was slower than target — is this fatigue or do I need to adjust expectations?");
+      } else if (breakdown?.paceScore <= 3 && dayLog.feedback?.paceAvg) {
+        postWorkoutBase.push("I beat target pace — time to update my threshold zones?");
+      }
+
+      // Performance-specific
+      if (performance >= 8) {
+        postWorkoutBase.push("Strong performance — should I progress the plan faster?");
+      }
+    }
+
+    // Always available post-workout
+    if (isLogged) {
+      postWorkoutBase.push(
+        "Review my progress this week — am I on track for race day?",
+        "Compare this session to my targets — where am I improving?",
+        "What should I eat and do in the next 2 hours for optimal recovery?",
+        "How does this workout fit in the bigger picture of my training block?",
+      );
+    }
+
+    // ── PRE-WORKOUT prompts ──
     const dayPromptsBase = [
       "Make this easier — I'm feeling fatigued",
       "Push the intensity — I'm feeling strong",
@@ -838,11 +894,16 @@ export default function HyroxCalendar() {
       ],
     };
 
-    const dayPrompts = mode==="day" ? [
-      ...dayPromptsBase,
-      ...(typePrompts[workoutType] || ["What should I focus on for this workout?"]),
-      ...(weekNum >= (programWeeks - 1) ? ["I'm in taper — is this too much volume?"] : []),
-    ].slice(0, 6) : [];
+    // Choose prompts based on whether workout is logged
+    const dayPrompts = mode==="day" ? (
+      isLogged
+        ? postWorkoutBase.slice(0, 6)
+        : [
+            ...dayPromptsBase,
+            ...(typePrompts[workoutType] || ["What should I focus on for this workout?"]),
+            ...(weekNum >= (programWeeks - 1) ? ["I'm in taper — is this too much volume?"] : []),
+          ].slice(0, 6)
+    ) : [];
 
     const planPrompts = [
       "Am I doing too much Zone 3? Switch me to polarized 80/20",
@@ -888,9 +949,9 @@ export default function HyroxCalendar() {
         <div style={{flex:1,overflowY:"auto",padding:"14px 16px",display:"flex",flexDirection:"column",gap:10}}>
           {messages.length===0 && (
             <div style={{textAlign:"center",padding:"20px 10px"}}>
-              <div style={{fontSize:24,marginBottom:10}}>{chatMode==="day"?"🎯":"📋"}</div>
+              <div style={{fontSize:24,marginBottom:10}}>{chatMode==="day"?(isLogged?"📊":"🎯"):"📋"}</div>
               <div style={{fontFamily:"Barlow Condensed",fontSize:14,letterSpacing:"0.1em",color:t.textFaint,marginBottom:14}}>
-                {chatMode==="day"?"ASK ABOUT THIS WORKOUT":"ASK ABOUT YOUR PLAN"}
+                {chatMode==="day"?(isLogged?"REVIEW & RECOVER":"ASK ABOUT THIS WORKOUT"):"ASK ABOUT YOUR PLAN"}
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {quickPrompts.map((p,i)=>(
