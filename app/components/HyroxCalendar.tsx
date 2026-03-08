@@ -779,6 +779,20 @@ export default function HyroxCalendar() {
           >
             {isDark?"☀ LIGHT":"● DARK"}
           </button>
+          {/* D/W/M view switcher in top nav */}
+          <div style={{display:"flex",gap:2,background:t.bgInput,borderRadius:4,padding:1,border:`1px solid ${t.borderFocus}`}}>
+            {(["day","week","month"] as const).map(mode=>{
+              const label=mode[0].toUpperCase();
+              const active=view==="calendar"&&calendarMode===mode;
+              return(
+                <button key={mode} onClick={()=>{setCalendarMode(mode);setView("calendar");setSelectedDate(null);}} style={{
+                  background:active?"#FF6B3522":"transparent",border:"none",borderRadius:3,
+                  color:active?"#FF6B35":t.textFaint,cursor:"pointer",padding:bp.isMobile?"3px 7px":"4px 10px",
+                  fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",
+                }} title={`${mode} view (${label})`}>{label}</button>
+              );
+            })}
+          </div>
           <button
             onClick={()=>{setSelectedDate(null);setChatMode("plan");setView("planchat");}}
             style={{background:view==="planchat"?"#C084FC22":t.bgInput,border:`1px solid ${view==="planchat"?"#C084FC":t.borderFocus}`,borderRadius:4,color:view==="planchat"?"#C084FC":t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
