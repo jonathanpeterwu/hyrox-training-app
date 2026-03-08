@@ -30,6 +30,31 @@ const TYPE_META: Record<string, { color: string; label: string; icon: string }> 
   rest:      { color: "#4B5563", label: "REST",         icon: "😴" },
 };
 
+// ─── THEME ────────────────────────────────────────────────────────────────────
+interface Theme {
+  bg: string; bgAlt: string; bgCard: string; bgInput: string; bgHover: string;
+  border: string; borderLight: string; borderFocus: string;
+  text: string; textSecondary: string; textMuted: string; textFaint: string; textGhost: string;
+  chatBg: string; overlayBg: string; modalBg: string;
+  cardTodayBg: string; scrollThumb: string;
+}
+
+const DARK_THEME: Theme = {
+  bg:"#080808", bgAlt:"#090909", bgCard:"#0D0D0D", bgInput:"#111", bgHover:"#0F0A07",
+  border:"#1a1a1a", borderLight:"#141414", borderFocus:"#222",
+  text:"#E8E8E0", textSecondary:"#CCC", textMuted:"#888", textFaint:"#555", textGhost:"#333",
+  chatBg:"#090909", overlayBg:"#000000CC", modalBg:"#0D0D0D",
+  cardTodayBg:"#0F0A07", scrollThumb:"#FF6B35",
+};
+
+const LIGHT_THEME: Theme = {
+  bg:"#F5F5F3", bgAlt:"#EEEEE9", bgCard:"#FFFFFF", bgInput:"#F0F0EC", bgHover:"#FFF5EE",
+  border:"#D4D4D0", borderLight:"#E0E0DC", borderFocus:"#BBB",
+  text:"#1A1A1A", textSecondary:"#333", textMuted:"#666", textFaint:"#888", textGhost:"#AAA",
+  chatBg:"#EEEEE9", overlayBg:"#00000066", modalBg:"#FFFFFF",
+  cardTodayBg:"#FFF5EE", scrollThumb:"#FF6B35",
+};
+
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 interface Workout {
   type: string;
@@ -268,10 +293,11 @@ interface AppSettings {
   startDate: Date;
   programWeeks: number;
   hrZones: HRZones;
+  themeMode: "dark" | "light";
 }
 
 function loadSettings(): AppSettings {
-  if (typeof window === "undefined") return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES };
+  if (typeof window === "undefined") return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark" };
   try {
     const raw = localStorage.getItem("hyrox-settings");
     if (raw) {
@@ -280,14 +306,15 @@ function loadSettings(): AppSettings {
         startDate: new Date(parsed.startDate),
         programWeeks: parsed.programWeeks || DEFAULT_PROGRAM_WEEKS,
         hrZones: parsed.hrZones ? { ...DEFAULT_HR_ZONES, ...parsed.hrZones } : DEFAULT_HR_ZONES,
+        themeMode: parsed.themeMode || "dark",
       };
     }
   } catch { /* ignore */ }
-  return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES };
+  return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark" };
 }
 
-function saveSettings(startDate: Date, programWeeks: number, hrZones: HRZones) {
-  localStorage.setItem("hyrox-settings", JSON.stringify({ startDate: startDate.toISOString(), programWeeks, hrZones }));
+function saveSettings(startDate: Date, programWeeks: number, hrZones: HRZones, themeMode: "dark" | "light" = "dark") {
+  localStorage.setItem("hyrox-settings", JSON.stringify({ startDate: startDate.toISOString(), programWeeks, hrZones, themeMode }));
 }
 
 export default function HyroxCalendar() {
@@ -304,6 +331,9 @@ export default function HyroxCalendar() {
   const [startDate, setStartDate] = useState<Date>(DEFAULT_START_DATE);
   const [programWeeks, setProgramWeeks] = useState(DEFAULT_PROGRAM_WEEKS);
   const [hrZones, setHrZones] = useState<HRZones>(DEFAULT_HR_ZONES);
+  const [themeMode, setThemeMode] = useState<"dark"|"light">("dark");
+  const t = themeMode === "dark" ? DARK_THEME : LIGHT_THEME;
+  const isDark = themeMode === "dark";
   // Chat state
   const [chatMode, setChatMode] = useState("day"); // "day" | "plan"
   const [dayMessages, setDayMessages] = useState<Record<string, ChatMessage[]>>({});
@@ -311,6 +341,8 @@ export default function HyroxCalendar() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
+  const [calendarMode, setCalendarMode] = useState<"month"|"week"|"day">("month");
+  const [focusDate, setFocusDate] = useState<Date>(new Date()); // for week/day navigation
   const chatEndRef = useRef<HTMLDivElement>(null);
   const bp = useBreakpoint();
 
@@ -320,8 +352,22 @@ export default function HyroxCalendar() {
     setStartDate(s.startDate);
     setProgramWeeks(s.programWeeks);
     setHrZones(s.hrZones);
+    setThemeMode(s.themeMode);
     setCurrentMonth(s.startDate.getMonth());
     setCurrentYear(s.startDate.getFullYear());
+  }, []);
+
+  // Keyboard shortcuts: D/W/M for calendar modes
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Don't fire when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === "d" || e.key === "D") { setCalendarMode("day"); setView("calendar"); setSelectedDate(null); }
+      if (e.key === "w" || e.key === "W") { setCalendarMode("week"); setView("calendar"); setSelectedDate(null); }
+      if (e.key === "m" || e.key === "M") { setCalendarMode("month"); setView("calendar"); setSelectedDate(null); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
 
   const totalDays = programWeeks * 7 + 1; // +1 for opening Sunday
@@ -475,12 +521,12 @@ export default function HyroxCalendar() {
     ];
 
     return (
-      <div style={{display:"flex",flexDirection:"column",height:"100%",background:"#090909"}}>
+      <div style={{display:"flex",flexDirection:"column",height:"100%",background:t.chatBg}}>
         {/* Mode toggle (only in day view) */}
         {dateStr && (
-          <div style={{display:"flex",borderBottom:"1px solid #161616",flexShrink:0}}>
+          <div style={{display:"flex",borderBottom:`1px solid ${t.border}`,flexShrink:0}}>
             {([["day","📅 This Workout"],["plan","📋 Full Plan"]] as const).map(([m,l])=>(
-              <button key={m} onClick={()=>setChatMode(m)} style={{flex:1,padding:"10px 0",background:chatMode===m?"#111":"transparent",border:"none",borderBottom:chatMode===m?"2px solid #FF6B35":"2px solid transparent",color:chatMode===m?"#E8E8E0":"#444",cursor:"pointer",fontSize:10,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}>
+              <button key={m} onClick={()=>setChatMode(m)} style={{flex:1,padding:"10px 0",background:chatMode===m?t.bgInput:"transparent",border:"none",borderBottom:chatMode===m?"2px solid #FF6B35":"2px solid transparent",color:chatMode===m?t.text:t.textFaint,cursor:"pointer",fontSize:10,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}>
                 {l}
               </button>
             ))}
@@ -489,7 +535,7 @@ export default function HyroxCalendar() {
 
         {/* Override badge */}
         {chatMode==="day" && hasOverride && (
-          <div style={{padding:"6px 14px",background:"#FF6B3511",borderBottom:"1px solid #FF6B3533",fontSize:9,color:"#FF6B35",letterSpacing:"0.12em",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div style={{padding:"6px 14px",background:isDark?"#FF6B3511":"#FF6B3518",borderBottom:"1px solid #FF6B3533",fontSize:9,color:"#FF6B35",letterSpacing:"0.12em",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
             <span>⚡ AI OVERRIDE ACTIVE</span>
             <button onClick={()=>setWorkoutOverrides(p=>{const n={...p};delete n[dateStr!];return n;})} style={{background:"none",border:"1px solid #FF6B3544",borderRadius:3,color:"#FF6B35",cursor:"pointer",padding:"2px 6px",fontSize:8}}>RESET</button>
           </div>
@@ -506,12 +552,12 @@ export default function HyroxCalendar() {
           {messages.length===0 && (
             <div style={{textAlign:"center",padding:"20px 10px"}}>
               <div style={{fontSize:24,marginBottom:10}}>{chatMode==="day"?"🎯":"📋"}</div>
-              <div style={{fontFamily:"Barlow Condensed",fontSize:14,letterSpacing:"0.1em",color:"#444",marginBottom:14}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:14,letterSpacing:"0.1em",color:t.textFaint,marginBottom:14}}>
                 {chatMode==="day"?"ASK ABOUT THIS WORKOUT":"ASK ABOUT YOUR PLAN"}
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {quickPrompts.map((p,i)=>(
-                  <button key={i} onClick={()=>sendMessage(chatMode,p,chatMode==="day"?dateStr??null:null)} style={{background:"#111",border:"1px solid #1a1a1a",borderRadius:4,color:"#666",cursor:"pointer",padding:"7px 10px",fontSize:12,fontFamily:"DM Mono",textAlign:"left",lineHeight:1.4}}>
+                  <button key={i} onClick={()=>sendMessage(chatMode,p,chatMode==="day"?dateStr??null:null)} style={{background:t.bgInput,border:`1px solid ${t.border}`,borderRadius:4,color:t.textMuted,cursor:"pointer",padding:"7px 10px",fontSize:12,fontFamily:"DM Mono",textAlign:"left",lineHeight:1.4}}>
                     {p}
                   </button>
                 ))}
@@ -524,32 +570,32 @@ export default function HyroxCalendar() {
             const parsed = msg.parsed;
             return (
               <div key={i} style={{display:"flex",justifyContent:isUser?"flex-end":"flex-start"}}>
-                <div style={{maxWidth:"88%",background:isUser?"#FF6B3522":"#111",border:`1px solid ${isUser?"#FF6B3544":"#1a1a1a"}`,borderRadius:isUser?"8px 8px 2px 8px":"8px 8px 8px 2px",padding:"10px 13px"}}>
+                <div style={{maxWidth:"88%",background:isUser?(isDark?"#FF6B3522":"#FF6B3518"):t.bgInput,border:`1px solid ${isUser?"#FF6B3544":t.border}`,borderRadius:isUser?"8px 8px 2px 8px":"8px 8px 8px 2px",padding:"10px 13px"}}>
                   {!isUser && parsed && (
                     <>
-                      <div style={{fontSize:13,color:"#CCC",lineHeight:1.75,whiteSpace:"pre-wrap"}}>{parsed.cleanText}</div>
+                      <div style={{fontSize:13,color:t.textSecondary,lineHeight:1.75,whiteSpace:"pre-wrap"}}>{parsed.cleanText}</div>
                       {parsed.workoutUpdate && (
-                        <div style={{marginTop:10,padding:"10px 12px",background:"#FF6B3511",border:"1px solid #FF6B3533",borderRadius:4}}>
+                        <div style={{marginTop:10,padding:"10px 12px",background:isDark?"#FF6B3511":"#FF6B3518",border:"1px solid #FF6B3533",borderRadius:4}}>
                           <div style={{fontSize:9,color:"#FF6B35",letterSpacing:"0.15em",marginBottom:6}}>⚡ WORKOUT UPDATED</div>
-                          <div style={{fontSize:12,color:"#AAA",lineHeight:1.7}}>
-                            <div><span style={{color:"#555"}}>Title: </span>{parsed.workoutUpdate.title}</div>
-                            <div><span style={{color:"#555"}}>Sets: </span>{parsed.workoutUpdate.sets}</div>
-                            <div><span style={{color:"#555"}}>Pace: </span>{parsed.workoutUpdate.pace}</div>
-                            <div><span style={{color:"#555"}}>HR: </span>{parsed.workoutUpdate.hr} bpm</div>
+                          <div style={{fontSize:12,color:t.textMuted,lineHeight:1.7}}>
+                            <div><span style={{color:t.textFaint}}>Title: </span>{parsed.workoutUpdate.title}</div>
+                            <div><span style={{color:t.textFaint}}>Sets: </span>{parsed.workoutUpdate.sets}</div>
+                            <div><span style={{color:t.textFaint}}>Pace: </span>{parsed.workoutUpdate.pace}</div>
+                            <div><span style={{color:t.textFaint}}>HR: </span>{parsed.workoutUpdate.hr} bpm</div>
                           </div>
                         </div>
                       )}
                       {parsed.progressionUpdate && (
-                        <div style={{marginTop:10,padding:"10px 12px",background:"#C084FC11",border:"1px solid #C084FC33",borderRadius:4}}>
+                        <div style={{marginTop:10,padding:"10px 12px",background:isDark?"#C084FC11":"#C084FC18",border:"1px solid #C084FC33",borderRadius:4}}>
                           <div style={{fontSize:9,color:"#C084FC",letterSpacing:"0.15em",marginBottom:6}}>🔺 PROGRESSION UPDATED</div>
-                          <div style={{fontSize:12,color:"#AAA",lineHeight:1.7}}>
+                          <div style={{fontSize:12,color:t.textMuted,lineHeight:1.7}}>
                             Weeks adjusted: {Object.keys(parsed.progressionUpdate.weeklyAdjustments||{}).join(", ")}
                           </div>
                         </div>
                       )}
                     </>
                   )}
-                  {isUser && <div style={{fontSize:13,color:"#FFB899",lineHeight:1.6}}>{msg.content}</div>}
+                  {isUser && <div style={{fontSize:13,color:isDark?"#FFB899":"#C04400",lineHeight:1.6}}>{msg.content}</div>}
                 </div>
               </div>
             );
@@ -566,7 +612,7 @@ export default function HyroxCalendar() {
         </div>
 
         {/* Input */}
-        <div style={{borderTop:"1px solid #161616",padding:"12px 14px",flexShrink:0}}>
+        <div style={{borderTop:`1px solid ${t.border}`,padding:"12px 14px",flexShrink:0}}>
           <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
             <textarea
               value={chatInput}
@@ -574,17 +620,17 @@ export default function HyroxCalendar() {
               onKeyDown={e=>{ if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage(chatMode,chatInput,chatMode==="day"?dateStr??null:null);}}}
               placeholder={chatMode==="day"?"Ask about this workout or request changes…":"Ask about your overall plan…"}
               rows={2}
-              style={{flex:1,background:"#111",border:"1px solid #222",borderRadius:6,color:"#CCC",padding:"8px 12px",fontSize:13,fontFamily:"DM Mono",outline:"none",resize:"none",lineHeight:1.5}}
+              style={{flex:1,background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"8px 12px",fontSize:13,fontFamily:"DM Mono",outline:"none",resize:"none",lineHeight:1.5}}
             />
             <button
               onClick={()=>sendMessage(chatMode,chatInput,chatMode==="day"?dateStr??null:null)}
               disabled={chatLoading||!chatInput.trim()}
-              style={{background:chatInput.trim()?"#FF6B35":"#1a1a1a",border:"none",borderRadius:6,color:chatInput.trim()?"#0A0A0A":"#333",cursor:chatInput.trim()?"pointer":"default",padding:"10px 14px",fontFamily:"Barlow Condensed",fontWeight:900,fontSize:14,letterSpacing:"0.1em",minWidth:48,flexShrink:0}}
+              style={{background:chatInput.trim()?"#FF6B35":t.border,border:"none",borderRadius:6,color:chatInput.trim()?(isDark?"#0A0A0A":"#FFF"):t.textGhost,cursor:chatInput.trim()?"pointer":"default",padding:"10px 14px",fontFamily:"Barlow Condensed",fontWeight:900,fontSize:14,letterSpacing:"0.1em",minWidth:48,flexShrink:0}}
             >
               ↑
             </button>
           </div>
-          <div style={{fontSize:8,color:"#333",marginTop:5,letterSpacing:"0.1em"}}>ENTER TO SEND · SHIFT+ENTER FOR NEWLINE · {chatMode==="day"?"CHANGES APPLY TO THIS WORKOUT ONLY":"CHANGES AFFECT WHOLE PLAN"}</div>
+          <div style={{fontSize:8,color:t.textGhost,marginTop:5,letterSpacing:"0.1em"}}>ENTER TO SEND · SHIFT+ENTER FOR NEWLINE · {chatMode==="day"?"CHANGES APPLY TO THIS WORKOUT ONLY":"CHANGES AFFECT WHOLE PLAN"}</div>
         </div>
       </div>
     );
@@ -601,11 +647,11 @@ export default function HyroxCalendar() {
     const isPast = date<today;
 
     if (!workout || !meta) return (
-      <div style={{padding:60,textAlign:"center",color:"#444"}}>
+      <div style={{padding:60,textAlign:"center",color:t.textFaint}}>
         <div style={{fontSize:40,marginBottom:12}}>📅</div>
         <div style={{fontFamily:"Barlow Condensed",fontSize:18,letterSpacing:"0.1em"}}>Outside training window</div>
-        <div style={{fontSize:13,marginTop:6,color:"#444"}}>Program: {startDate.toLocaleDateString("en-US",{month:"short",day:"numeric"})} – {new Date(startDate.getTime()+(programWeeks*7)*86400000).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
-        <button onClick={()=>setSelectedDate(null)} style={{marginTop:20,background:"none",border:"1px solid #222",borderRadius:4,color:"#555",cursor:"pointer",padding:"8px 18px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← BACK TO CALENDAR</button>
+        <div style={{fontSize:13,marginTop:6,color:t.textFaint}}>Program: {startDate.toLocaleDateString("en-US",{month:"short",day:"numeric"})} – {new Date(startDate.getTime()+(programWeeks*7)*86400000).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+        <button onClick={()=>setSelectedDate(null)} style={{marginTop:20,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"8px 18px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← BACK TO CALENDAR</button>
       </div>
     );
 
@@ -617,8 +663,8 @@ export default function HyroxCalendar() {
         {/* Left: workout detail */}
         <div style={{overflowY:"auto",padding:bp.isMobile?"14px 12px":"20px 24px",flex:bp.isMobile?1:undefined}}>
           <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?8:12,marginBottom:bp.isMobile?14:20}}>
-            <button onClick={()=>setSelectedDate(null)} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:"5px 12px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em",flexShrink:0}}>← BACK</button>
-            <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?10:12,letterSpacing:"0.18em",color:"#444",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+            <button onClick={()=>setSelectedDate(null)} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 12px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em",flexShrink:0}}>← BACK</button>
+            <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?10:12,letterSpacing:"0.18em",color:t.textFaint,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
               WEEK {wn} // {bp.isMobile
                 ? date.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}).toUpperCase()
                 : date.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}).toUpperCase()}
@@ -628,44 +674,44 @@ export default function HyroxCalendar() {
           </div>
 
           {/* Main workout card */}
-          <div style={{background:"#0D0D0D",border:`1px solid ${meta.color}44`,borderRadius:8,overflow:"hidden",marginBottom:14}}>
+          <div style={{background:t.bgCard,border:`1px solid ${meta.color}44`,borderRadius:8,overflow:"hidden",marginBottom:14}}>
             <div style={{height:4,background:meta.color}} />
             <div style={{padding:bp.isMobile?"14px 14px":"18px 22px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:bp.isMobile?10:14,gap:8}}>
                 <div style={{minWidth:0}}>
-                  <div style={{fontSize:9,letterSpacing:"0.2em",color:"#444",marginBottom:3}}>{meta.icon} {meta.label}</div>
-                  <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?22:28,fontWeight:900,color:"#E8E8E0",lineHeight:1}}>{workout.title}</div>
+                  <div style={{fontSize:9,letterSpacing:"0.2em",color:t.textFaint,marginBottom:3}}>{meta.icon} {meta.label}</div>
+                  <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?22:28,fontWeight:900,color:t.text,lineHeight:1}}>{workout.title}</div>
                 </div>
                 {log?.status&&<div style={{background:statusColor(log.status)+"22",border:`1px solid ${statusColor(log.status)}`,borderRadius:4,padding:"3px 9px",fontSize:9,color:statusColor(log.status)!,letterSpacing:"0.1em",whiteSpace:"nowrap",flexShrink:0}}>{log.status==="yes"?"✓ DONE":log.status==="partial"?"½ PARTIAL":"✗ MISSED"}</div>}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:bp.isMobile?6:8,marginBottom:bp.isMobile?10:14}}>
                 {([["SETS",workout.sets],["PACE",workout.pace],["REST",workout.rest],["HR (bpm)",workout.hr]] as const).map(([l,v])=>(
-                  <div key={l} style={{background:"#111",borderRadius:4,padding:bp.isMobile?"7px 10px":"9px 12px"}}>
-                    <div style={{fontSize:8,letterSpacing:"0.2em",color:"#444",marginBottom:3}}>{l}</div>
-                    <div style={{fontSize:bp.isMobile?12:13,color:"#CCC"}}>{v}</div>
+                  <div key={l} style={{background:t.bgInput,borderRadius:4,padding:bp.isMobile?"7px 10px":"9px 12px"}}>
+                    <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:3}}>{l}</div>
+                    <div style={{fontSize:bp.isMobile?12:13,color:t.textSecondary}}>{v}</div>
                   </div>
                 ))}
               </div>
-              <div style={{fontSize:bp.isMobile?12:13,color:"#888",lineHeight:1.8,borderTop:"1px solid #161616",paddingTop:12}}>{workout.notes}</div>
+              <div style={{fontSize:bp.isMobile?12:13,color:t.textMuted,lineHeight:1.8,borderTop:`1px solid ${t.border}`,paddingTop:12}}>{workout.notes}</div>
             </div>
           </div>
 
           {/* Feedback */}
           {(isPast||isToday)&&(
-            <div style={{background:"#0D0D0D",border:"1px solid #1a1a1a",borderRadius:8,padding:bp.isMobile?"12px 14px":"16px 18px",marginBottom:14}}>
-              <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:"#444",marginBottom:12}}>LOG WORKOUT</div>
+            <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"12px 14px":"16px 18px",marginBottom:14}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:t.textFaint,marginBottom:12}}>LOG WORKOUT</div>
               {log?.feedback?(
                 <div>
-                  <div style={{fontSize:12,color:"#666",lineHeight:1.9}}>
-                    <div><span style={{color:"#444"}}>RPE: </span>{log.feedback.rpe}/10</div>
-                    <div><span style={{color:"#444"}}>Status: </span>{log.feedback.completed}</div>
-                    {log.feedback.notes&&<div><span style={{color:"#444"}}>Notes: </span>{log.feedback.notes}</div>}
-                    <div style={{marginTop:8,padding:"7px 10px",background:"#111",borderRadius:4,fontSize:9,display:"flex",gap:16}}>
+                  <div style={{fontSize:12,color:t.textMuted,lineHeight:1.9}}>
+                    <div><span style={{color:t.textFaint}}>RPE: </span>{log.feedback.rpe}/10</div>
+                    <div><span style={{color:t.textFaint}}>Status: </span>{log.feedback.completed}</div>
+                    {log.feedback.notes&&<div><span style={{color:t.textFaint}}>Notes: </span>{log.feedback.notes}</div>}
+                    <div style={{marginTop:8,padding:"7px 10px",background:t.bgInput,borderRadius:4,fontSize:9,display:"flex",gap:16}}>
                       <span style={{color:"#FF6B35"}}>Fatigue {log.adjustments?.fatigue}/10</span>
                       <span style={{color:"#4ECDC4"}}>Perf {log.adjustments?.performance}/10</span>
                     </div>
                   </div>
-                  <button onClick={()=>setFeedbackModal(key)} style={{marginTop:10,background:"none",border:"1px solid #222",borderRadius:4,color:"#555",cursor:"pointer",padding:"5px 10px",fontSize:9,fontFamily:"DM Mono",letterSpacing:"0.1em",width:"100%"}}>UPDATE</button>
+                  <button onClick={()=>setFeedbackModal(key)} style={{marginTop:10,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 10px",fontSize:9,fontFamily:"DM Mono",letterSpacing:"0.1em",width:"100%"}}>UPDATE</button>
                 </div>
               ):(
                 <button onClick={()=>setFeedbackModal(key)} style={{background:"#FF6B3522",border:"1px solid #FF6B35",borderRadius:4,color:"#FF6B35",cursor:"pointer",padding:"9px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>+ LOG THIS WORKOUT</button>
@@ -675,7 +721,7 @@ export default function HyroxCalendar() {
 
           {/* Mobile: chat toggle button */}
           {bp.isMobile && (
-            <button onClick={()=>setShowMobileChat(true)} style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:6,color:"#888",cursor:"pointer",padding:"12px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            <button onClick={()=>setShowMobileChat(true)} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textMuted,cursor:"pointer",padding:"12px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
               💬 ASK AI COACH
             </button>
           )}
@@ -685,15 +731,15 @@ export default function HyroxCalendar() {
         {bp.isMobile ? (
           showMobileChat && (
             <div className="mobile-chat-overlay">
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:"1px solid #161616",flexShrink:0}}>
-                <div style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:700,letterSpacing:"0.15em",color:"#666"}}>AI COACH</div>
-                <button onClick={()=>setShowMobileChat(false)} style={{background:"none",border:"1px solid #222",borderRadius:4,color:"#555",cursor:"pointer",padding:"4px 10px",fontSize:10,fontFamily:"Barlow Condensed"}}>✕ CLOSE</button>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:`1px solid ${t.border}`,flexShrink:0}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:700,letterSpacing:"0.15em",color:t.textMuted}}>AI COACH</div>
+                <button onClick={()=>setShowMobileChat(false)} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"4px 10px",fontSize:10,fontFamily:"Barlow Condensed"}}>✕ CLOSE</button>
               </div>
               <div style={{flex:1,overflow:"hidden"}}><ChatPanel mode={chatMode} dateStr={key} /></div>
             </div>
           )
         ) : (
-          <div style={{borderLeft:"1px solid #161616",display:"flex",flexDirection:"column",height:"100%"}}>
+          <div style={{borderLeft:`1px solid ${t.border}`,display:"flex",flexDirection:"column",height:"100%"}}>
             <ChatPanel mode={chatMode} dateStr={key} />
           </div>
         )}
@@ -703,42 +749,50 @@ export default function HyroxCalendar() {
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
-    <div style={{fontFamily:"'DM Mono','Courier New',monospace",background:"#080808",minHeight:"100vh",color:"#E8E8E0",fontSize:13}}>
+    <div style={{fontFamily:"'DM Mono','Courier New',monospace",background:t.bg,minHeight:"100vh",color:t.text,fontSize:13}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Barlow+Condensed:wght@700;900&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:3px;height:3px;}
-        ::-webkit-scrollbar-thumb{background:#FF6B35;border-radius:2px;}
+        ::-webkit-scrollbar-thumb{background:${t.scrollThumb};border-radius:2px;}
         .cal-day:hover{border-color:#FF6B35!important;cursor:pointer;}
         .cal-day{transition:all 0.15s ease;}
         @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
         @media(max-width:639px){
           .hide-mobile{display:none!important;}
-          .mobile-chat-overlay{position:fixed;inset:0;z-index:90;background:#090909;display:flex;flex-direction:column;}
+          .mobile-chat-overlay{position:fixed;inset:0;z-index:90;background:${t.chatBg};display:flex;flex-direction:column;}
         }
       `}</style>
 
       {/* Top bar */}
-      <div style={{borderBottom:"1px solid #161616",padding:bp.isMobile?"8px 12px":"10px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,minHeight:bp.isMobile?44:56,flexShrink:0}}>
+      <div style={{borderBottom:`1px solid ${t.border}`,padding:bp.isMobile?"8px 12px":"10px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,minHeight:bp.isMobile?44:56,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"baseline",gap:bp.isMobile?6:12}}>
           <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?20:26,fontWeight:900,color:"#FF6B35",letterSpacing:"0.08em"}}>HYROX</div>
-          {!bp.isMobile && <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:"#282828"}}>ADAPTIVE TRAINING CALENDAR</div>}
+          {!bp.isMobile && <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:t.textGhost}}>ADAPTIVE TRAINING CALENDAR</div>}
         </div>
         <div style={{display:"flex",gap:bp.isMobile?6:10,alignItems:"center",flexWrap:"wrap"}}>
+          {/* Theme toggle */}
+          <button
+            onClick={()=>{const next=isDark?"light":"dark";setThemeMode(next);saveSettings(startDate,programWeeks,hrZones,next);}}
+            style={{background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
+            title={`Switch to ${isDark?"light":"dark"} mode`}
+          >
+            {isDark?"☀ LIGHT":"● DARK"}
+          </button>
           <button
             onClick={()=>{setSelectedDate(null);setChatMode("plan");setView("planchat");}}
-            style={{background:view==="planchat"?"#C084FC22":"#111",border:`1px solid ${view==="planchat"?"#C084FC":"#222"}`,borderRadius:4,color:view==="planchat"?"#C084FC":"#555",cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
+            style={{background:view==="planchat"?"#C084FC22":t.bgInput,border:`1px solid ${view==="planchat"?"#C084FC":t.borderFocus}`,borderRadius:4,color:view==="planchat"?"#C084FC":t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
           >
             📋 {bp.isMobile?"PLAN":"ADJUST FULL PLAN"}
           </button>
           <button
             onClick={()=>{setSelectedDate(null);setView("settings");}}
-            style={{background:view==="settings"?"#60A5FA22":"#111",border:`1px solid ${view==="settings"?"#60A5FA":"#222"}`,borderRadius:4,color:view==="settings"?"#60A5FA":"#555",cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
+            style={{background:view==="settings"?"#60A5FA22":t.bgInput,border:`1px solid ${view==="settings"?"#60A5FA":t.borderFocus}`,borderRadius:4,color:view==="settings"?"#60A5FA":t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontSize:bp.isMobile?8:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em"}}
           >
             ⚙ {bp.isMobile?"":"SETTINGS"}
           </button>
           {!bp.isMobile && (
-            <div style={{fontSize:9,color:"#333",letterSpacing:"0.1em"}}>
+            <div style={{fontSize:9,color:t.textGhost,letterSpacing:"0.1em"}}>
               {Object.values(workoutLog).filter(l=>l.status==="yes").length} DONE ·&nbsp;
               {Object.keys(progressionOverrides).length} WK OVERRIDES ·&nbsp;
               {Object.keys(workoutOverrides).length} DAY OVERRIDES
@@ -755,7 +809,7 @@ export default function HyroxCalendar() {
         }>
           <div style={{overflowY:"auto",padding:bp.isMobile?"14px 12px":"20px 24px",flex:bp.isMobile?1:undefined}}>
             <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?8:12,marginBottom:bp.isMobile?12:18}}>
-              <button onClick={()=>setView("calendar")} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:"5px 12px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← CALENDAR</button>
+              <button onClick={()=>setView("calendar")} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 12px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← CALENDAR</button>
               <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?13:16,fontWeight:900,letterSpacing:"0.15em",color:"#C084FC"}}>FULL PLAN{!bp.isMobile && " ADJUSTMENTS"}</div>
             </div>
             {/* Week overview */}
@@ -764,11 +818,11 @@ export default function HyroxCalendar() {
                 const p=weekProfile(w, programWeeks);
                 const po=progressionOverrides[w];
                 return(
-                  <div key={w} style={{background:"#0D0D0D",border:`1px solid ${po?"#C084FC33":p.deload?"#4ECDC433":p.raceWeek?"#FF6B3544":"#161616"}`,borderRadius:6,padding:bp.isMobile?"10px 10px":"12px 14px"}}>
-                    <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?10:11,fontWeight:700,letterSpacing:"0.1em",color:p.deload?"#4ECDC4":p.raceWeek?"#FF6B35":"#666",marginBottom:bp.isMobile?4:6}}>
+                  <div key={w} style={{background:t.bgCard,border:`1px solid ${po?"#C084FC33":p.deload?"#4ECDC433":p.raceWeek?"#FF6B3544":t.border}`,borderRadius:6,padding:bp.isMobile?"10px 10px":"12px 14px"}}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?10:11,fontWeight:700,letterSpacing:"0.1em",color:p.deload?"#4ECDC4":p.raceWeek?"#FF6B35":t.textMuted,marginBottom:bp.isMobile?4:6}}>
                       WK {w} {p.deload?"/ DELOAD":p.raceWeek?"/ RACE":""}
                     </div>
-                    <div style={{fontSize:9,color:"#444",lineHeight:1.7}}>
+                    <div style={{fontSize:9,color:t.textFaint,lineHeight:1.7}}>
                       <div>Vol ×{Math.round(p.volMultiplier*100)}%</div>
                       <div>Int ×{Math.round(p.intMultiplier*100)}%</div>
                     </div>
@@ -784,7 +838,7 @@ export default function HyroxCalendar() {
 
             {/* Mobile: chat toggle button */}
             {bp.isMobile && (
-              <button onClick={()=>setShowMobileChat(true)} style={{width:"100%",background:"#111",border:"1px solid #C084FC44",borderRadius:6,color:"#C084FC",cursor:"pointer",padding:"12px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",marginTop:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <button onClick={()=>setShowMobileChat(true)} style={{width:"100%",background:t.bgInput,border:"1px solid #C084FC44",borderRadius:6,color:"#C084FC",cursor:"pointer",padding:"12px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",marginTop:12,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                 💬 ASK ABOUT PLAN
               </button>
             )}
@@ -792,15 +846,15 @@ export default function HyroxCalendar() {
           {bp.isMobile ? (
             showMobileChat && (
               <div className="mobile-chat-overlay">
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:"1px solid #161616",flexShrink:0}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:`1px solid ${t.border}`,flexShrink:0}}>
                   <div style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:700,letterSpacing:"0.15em",color:"#C084FC"}}>PLAN CHAT</div>
-                  <button onClick={()=>setShowMobileChat(false)} style={{background:"none",border:"1px solid #222",borderRadius:4,color:"#555",cursor:"pointer",padding:"4px 10px",fontSize:10,fontFamily:"Barlow Condensed"}}>✕ CLOSE</button>
+                  <button onClick={()=>setShowMobileChat(false)} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"4px 10px",fontSize:10,fontFamily:"Barlow Condensed"}}>✕ CLOSE</button>
                 </div>
                 <div style={{flex:1,overflow:"hidden"}}><ChatPanel mode="plan" /></div>
               </div>
             )
           ) : (
-            <div style={{borderLeft:"1px solid #161616",height:"100%"}}>
+            <div style={{borderLeft:`1px solid ${t.border}`,height:"100%"}}>
               <ChatPanel mode="plan" />
             </div>
           )}
@@ -812,47 +866,64 @@ export default function HyroxCalendar() {
         const endDate = new Date(startDate.getTime() + (programWeeks * 7) * 86400000);
         const fmtDate = (d: Date) => d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
         const inputDateStr = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-        const fieldStyle = {width:"100%",background:"#111",border:"1px solid #222",borderRadius:4,color:"#CCC",padding:"10px 12px",fontSize:13,fontFamily:"DM Mono",outline:"none" as const};
-        const labelStyle = {fontSize:11,letterSpacing:"0.15em",color:"#555",marginBottom:8,fontFamily:"Barlow Condensed" as const,fontWeight:700 as const};
+        const fieldStyle = {width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"10px 12px",fontSize:13,fontFamily:"DM Mono",outline:"none" as const};
+        const labelStyle = {fontSize:11,letterSpacing:"0.15em",color:t.textFaint,marginBottom:8,fontFamily:"Barlow Condensed" as const,fontWeight:700 as const};
         return (
           <div style={{maxWidth:600,margin:"0 auto",padding:bp.isMobile?"16px 14px":"28px 24px"}}>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
-              <button onClick={()=>setView("calendar")} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:"6px 14px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← CALENDAR</button>
+              <button onClick={()=>setView("calendar")} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"6px 14px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← CALENDAR</button>
               <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?16:20,fontWeight:900,letterSpacing:"0.15em",color:"#60A5FA"}}>SETTINGS</div>
             </div>
 
+            {/* Theme toggle */}
+            <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>APPEARANCE</div>
+              <div style={{display:"flex",gap:8}}>
+                {(["dark","light"] as const).map(mode=>(
+                  <button key={mode} onClick={()=>{setThemeMode(mode);saveSettings(startDate,programWeeks,hrZones,mode);}} style={{
+                    flex:1,padding:"12px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",
+                    background:themeMode===mode?(mode==="dark"?"#FF6B3522":"#FF6B3522"):t.bgInput,
+                    border:`1px solid ${themeMode===mode?"#FF6B35":t.borderFocus}`,
+                    color:themeMode===mode?"#FF6B35":t.textFaint,
+                  }}>
+                    {mode==="dark"?"● DARK MODE":"☀ LIGHT MODE"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Program config */}
-            <div style={{background:"#0D0D0D",border:"1px solid #1a1a1a",borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
-              <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:"#E8E8E0",marginBottom:16}}>PROGRAM</div>
+            <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>PROGRAM</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
                 <div>
                   <div style={labelStyle}>START DATE</div>
                   <input type="date" value={inputDateStr(startDate)} onChange={e=>{
                     const d = new Date(e.target.value + "T00:00:00");
-                    if(!isNaN(d.getTime())){setStartDate(d);saveSettings(d,programWeeks,hrZones);setCurrentMonth(d.getMonth());setCurrentYear(d.getFullYear());}
+                    if(!isNaN(d.getTime())){setStartDate(d);saveSettings(d,programWeeks,hrZones,themeMode);setCurrentMonth(d.getMonth());setCurrentYear(d.getFullYear());}
                   }} style={fieldStyle} />
                 </div>
                 <div>
                   <div style={labelStyle}>PROGRAM WEEKS</div>
                   <select value={programWeeks} onChange={e=>{
-                    const w=parseInt(e.target.value);setProgramWeeks(w);saveSettings(startDate,w,hrZones);
+                    const w=parseInt(e.target.value);setProgramWeeks(w);saveSettings(startDate,w,hrZones,themeMode);
                   }} style={{...fieldStyle,cursor:"pointer"}}>
                     {[4,5,6,7,8,9,10,11,12].map(w=><option key={w} value={w}>{w} weeks</option>)}
                   </select>
                 </div>
               </div>
-              <div style={{fontSize:12,color:"#666",lineHeight:1.6}}>
-                <span style={{color:"#444"}}>Window: </span>{fmtDate(startDate)} – {fmtDate(endDate)}
-                <span style={{color:"#333"}}> · {programWeeks * 7 + 1} days</span>
+              <div style={{fontSize:12,color:t.textMuted,lineHeight:1.6}}>
+                <span style={{color:t.textFaint}}>Window: </span>{fmtDate(startDate)} – {fmtDate(endDate)}
+                <span style={{color:t.textGhost}}> · {programWeeks * 7 + 1} days</span>
               </div>
-              <div style={{fontSize:11,color:"#444",marginTop:8,lineHeight:1.5}}>
+              <div style={{fontSize:11,color:t.textFaint,marginTop:8,lineHeight:1.5}}>
                 Deloads auto-placed at week {Math.ceil(programWeeks/2)} and {programWeeks-1}. Race week: {programWeeks}.
               </div>
             </div>
 
             {/* HR Zones */}
-            <div style={{background:"#0D0D0D",border:"1px solid #1a1a1a",borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
-              <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:"#E8E8E0",marginBottom:16}}>HR ZONES</div>
+            <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>HR ZONES</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
                 {([
                   ["maxHr","MAX HR","#F87171"],
@@ -871,18 +942,18 @@ export default function HyroxCalendar() {
                         if(!isNaN(val)&&val>0&&val<250){
                           const updated={...hrZones,[key]:val};
                           setHrZones(updated);
-                          saveSettings(startDate,programWeeks,updated);
+                          saveSettings(startDate,programWeeks,updated,themeMode);
                         }
                       }} style={{...fieldStyle,width:"100%"}} />
-                      <span style={{fontSize:11,color:"#444",flexShrink:0}}>bpm</span>
+                      <span style={{fontSize:11,color:t.textFaint,flexShrink:0}}>bpm</span>
                     </div>
                   </div>
                 ))}
               </div>
-              <div style={{marginTop:16,padding:"12px 14px",background:"#111",borderRadius:6,fontSize:12,color:"#666",lineHeight:1.7}}>
-                <div style={{fontFamily:"Barlow Condensed",fontSize:11,letterSpacing:"0.1em",color:"#555",marginBottom:6}}>ZONE SUMMARY</div>
+              <div style={{marginTop:16,padding:"12px 14px",background:t.bgInput,borderRadius:6,fontSize:12,color:t.textMuted,lineHeight:1.7}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:11,letterSpacing:"0.1em",color:t.textFaint,marginBottom:6}}>ZONE SUMMARY</div>
                 <div><span style={{color:"#60A5FA"}}>Z2:</span> &lt;{hrZones.z2Max} bpm</div>
-                <div><span style={{color:"#FFE66D"}}>Z3:</span> {hrZones.z3Low}–{hrZones.z3High} bpm</div>
+                <div><span style={{color:isDark?"#FFE66D":"#B8860B"}}>Z3:</span> {hrZones.z3Low}–{hrZones.z3High} bpm</div>
                 <div><span style={{color:"#F97316"}}>Z5:</span> {hrZones.z5Low}–{hrZones.z5High} bpm</div>
                 <div><span style={{color:"#FF6B35"}}>Threshold:</span> {hrZones.thresholdHr} bpm</div>
                 <div><span style={{color:"#F87171"}}>Max:</span> {hrZones.maxHr} bpm</div>
@@ -892,9 +963,9 @@ export default function HyroxCalendar() {
             {/* Reset */}
             <button onClick={()=>{
               setStartDate(DEFAULT_START_DATE);setProgramWeeks(DEFAULT_PROGRAM_WEEKS);setHrZones(DEFAULT_HR_ZONES);
-              saveSettings(DEFAULT_START_DATE,DEFAULT_PROGRAM_WEEKS,DEFAULT_HR_ZONES);
+              saveSettings(DEFAULT_START_DATE,DEFAULT_PROGRAM_WEEKS,DEFAULT_HR_ZONES,themeMode);
               setCurrentMonth(DEFAULT_START_DATE.getMonth());setCurrentYear(DEFAULT_START_DATE.getFullYear());
-            }} style={{background:"none",border:"1px solid #222",borderRadius:4,color:"#555",cursor:"pointer",padding:"10px 18px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>
+            }} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"10px 18px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>
               RESET TO DEFAULTS
             </button>
           </div>
@@ -902,73 +973,187 @@ export default function HyroxCalendar() {
       })()}
 
       {/* Calendar view */}
-      {view==="calendar" && !selectedDate && (
-        <div style={{padding:bp.isMobile?"10px 8px":"18px 20px"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:bp.isMobile?10:16}}>
-            <button onClick={()=>{if(currentMonth===0){setCurrentMonth(11);setCurrentYear(y=>y-1);}else setCurrentMonth(m=>m-1);}} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:bp.isMobile?"4px 10px":"5px 14px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?12:14}}>‹</button>
-            <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?16:20,fontWeight:900,letterSpacing:"0.15em"}}>{MONTHS[currentMonth].toUpperCase()} {currentYear}</div>
-            <button onClick={()=>{if(currentMonth===11){setCurrentMonth(0);setCurrentYear(y=>y+1);}else setCurrentMonth(m=>m+1);}} style={{background:"none",border:"1px solid #1a1a1a",borderRadius:4,color:"#555",cursor:"pointer",padding:bp.isMobile?"4px 10px":"5px 14px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?12:14}}>›</button>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:bp.isMobile?2:3,marginBottom:bp.isMobile?2:3}}>
-            {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:bp.isMobile?7:8,letterSpacing:"0.2em",color:"#2a2a2a",padding:"3px 0"}}>{bp.isMobile?d.charAt(0):d}</div>)}
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:bp.isMobile?2:3}}>
-            {calDays.map((date,i)=>{
-              if(!date)return<div key={i}/>;
-              const workout=getWorkoutForDate(date);
-              const key=dateKey(date);
-              const log=workoutLog[key];
-              const meta=workout?TYPE_META[workout.type]:null;
-              const isToday=key===dateKey(today);
-              const wn=getWeekNumber(date);
-              const hasOverride=!!workoutOverrides[key];
-              return(
-                <div key={i} className="cal-day" onClick={()=>{setSelectedDate(date);setChatMode("day");setShowMobileChat(false);setView("calendar");}} style={{border:"1px solid",borderColor:isToday?"#FF6B35":"#141414",borderRadius:bp.isMobile?3:5,minHeight:bp.isMobile?54:80,padding:bp.isMobile?"4px 4px 3px":"7px 7px 5px",background:isToday?"#0F0A07":"#0B0B0B",position:"relative",opacity:!workout&&!isToday?0.35:1}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:bp.isMobile?2:4}}>
-                    <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?11:14,fontWeight:700,color:isToday?"#FF6B35":"#444",lineHeight:1}}>{date.getDate()}</div>
-                    {wn&&!bp.isMobile&&<div style={{fontSize:6,color:"#1e1e1e",letterSpacing:"0.1em"}}>W{wn}</div>}
+      {view==="calendar" && !selectedDate && (()=>{
+        // Navigation helpers
+        const navPrev = () => {
+          if (calendarMode==="month") { if(currentMonth===0){setCurrentMonth(11);setCurrentYear(y=>y-1);}else setCurrentMonth(m=>m-1); }
+          else if (calendarMode==="week") { setFocusDate(d=>new Date(d.getTime()-7*86400000)); }
+          else { setFocusDate(d=>new Date(d.getTime()-86400000)); }
+        };
+        const navNext = () => {
+          if (calendarMode==="month") { if(currentMonth===11){setCurrentMonth(0);setCurrentYear(y=>y+1);}else setCurrentMonth(m=>m+1); }
+          else if (calendarMode==="week") { setFocusDate(d=>new Date(d.getTime()+7*86400000)); }
+          else { setFocusDate(d=>new Date(d.getTime()+86400000)); }
+        };
+        const navToday = () => { const t=new Date();t.setHours(0,0,0,0);setFocusDate(t);setCurrentMonth(t.getMonth());setCurrentYear(t.getFullYear()); };
+
+        // Week view: get Monday of the focus week
+        const getWeekStart = (d: Date) => { const day=(d.getDay()+6)%7; return new Date(d.getTime()-day*86400000); };
+        const weekStart = getWeekStart(focusDate);
+        const weekDates = Array.from({length:7},(_,i)=>new Date(weekStart.getTime()+i*86400000));
+
+        // Header label
+        const headerLabel = calendarMode==="month"
+          ? `${MONTHS[currentMonth].toUpperCase()} ${currentYear}`
+          : calendarMode==="week"
+          ? `${weekDates[0].toLocaleDateString("en-US",{month:"short",day:"numeric"})} – ${weekDates[6].toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}`
+          : focusDate.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"}).toUpperCase();
+
+        const modeBtnStyle = (active: boolean) => ({
+          background:active?"#FF6B3522":t.bgInput,border:`1px solid ${active?"#FF6B35":t.borderFocus}`,borderRadius:4,
+          color:active?"#FF6B35":t.textFaint,cursor:"pointer" as const,padding:"4px 10px",fontSize:10,
+          fontFamily:"Barlow Condensed",fontWeight:700 as const,letterSpacing:"0.12em",
+        });
+
+        // Shared day card renderer
+        const renderDayCard = (date: Date, expanded: boolean) => {
+          const workout=getWorkoutForDate(date);
+          const key=dateKey(date);
+          const log=workoutLog[key];
+          const meta=workout?TYPE_META[workout.type]:null;
+          const isTdy=key===dateKey(today);
+          const wn=getWeekNumber(date);
+          const hasOverride=!!workoutOverrides[key];
+
+          if (expanded) {
+            // Large card for week/day view
+            return (
+              <div key={key} className="cal-day" onClick={()=>{setSelectedDate(date);setChatMode("day");setShowMobileChat(false);}} style={{border:"1px solid",borderColor:isTdy?"#FF6B35":t.border,borderRadius:6,padding:"14px 16px",background:isTdy?t.cardTodayBg:t.bgAlt,position:"relative",cursor:"pointer",flex:1,minHeight:calendarMode==="day"?200:120}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,color:isTdy?"#FF6B35":t.textMuted,lineHeight:1}}>{date.getDate()}</div>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:11,color:t.textGhost,letterSpacing:"0.1em"}}>{DAYS[(date.getDay()+6)%7].toUpperCase()}</div>
+                    {wn&&<div style={{fontSize:9,color:t.textGhost,letterSpacing:"0.1em"}}>W{wn}</div>}
                   </div>
-                  {workout&&meta&&(
+                  {log?.status&&<div style={{background:statusColor(log.status)+"22",border:`1px solid ${statusColor(log.status)}`,borderRadius:4,padding:"2px 8px",fontSize:9,color:statusColor(log.status)!,letterSpacing:"0.1em"}}>{log.status==="yes"?"✓ DONE":log.status==="partial"?"½ PARTIAL":"✗ MISSED"}</div>}
+                </div>
+                {workout&&meta&&(
+                  <>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                      <div style={{width:6,height:6,borderRadius:"50%",background:hasOverride?"#C084FC":meta.color}}/>
+                      <span style={{fontSize:10,letterSpacing:"0.15em",color:meta.color}}>{meta.icon} {meta.label}</span>
+                    </div>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:calendarMode==="day"?24:18,fontWeight:900,color:t.text,lineHeight:1.1,marginBottom:8}}>{workout.title}</div>
+                    <div style={{display:"flex",gap:calendarMode==="day"?16:10,flexWrap:"wrap",marginBottom:8}}>
+                      {[["SETS",workout.sets],["PACE",workout.pace],["REST",workout.rest],["HR",workout.hr]].map(([l,v])=>(
+                        <div key={l}>
+                          <span style={{fontSize:9,color:t.textFaint,letterSpacing:"0.1em"}}>{l} </span>
+                          <span style={{fontSize:12,color:t.textMuted}}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{fontSize:12,color:t.textMuted,lineHeight:1.6}}>{workout.notes}</div>
+                  </>
+                )}
+                {!workout&&<div style={{fontSize:12,color:t.textGhost,fontStyle:"italic"}}>No workout scheduled</div>}
+              </div>
+            );
+          }
+
+          // Compact card for month view
+          return (
+            <div key={date.toISOString()} className="cal-day" onClick={()=>{setSelectedDate(date);setChatMode("day");setShowMobileChat(false);}} style={{border:"1px solid",borderColor:isTdy?"#FF6B35":t.borderLight,borderRadius:bp.isMobile?3:5,minHeight:bp.isMobile?54:80,padding:bp.isMobile?"4px 4px 3px":"7px 7px 5px",background:isTdy?t.cardTodayBg:t.bgAlt,position:"relative",opacity:!workout&&!isTdy?0.35:1,cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:bp.isMobile?2:4}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?11:14,fontWeight:700,color:isTdy?"#FF6B35":t.textFaint,lineHeight:1}}>{date.getDate()}</div>
+                {wn&&!bp.isMobile&&<div style={{fontSize:6,color:t.textGhost,letterSpacing:"0.1em"}}>W{wn}</div>}
+              </div>
+              {workout&&meta&&(
+                <>
+                  <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?2:4,marginBottom:bp.isMobile?1:3}}>
+                    <div style={{width:bp.isMobile?4:5,height:bp.isMobile?4:5,borderRadius:"50%",background:hasOverride?"#C084FC":meta.color,flexShrink:0}}/>
+                    {hasOverride&&<div style={{width:bp.isMobile?3:4,height:bp.isMobile?3:4,borderRadius:"50%",background:"#C084FC55"}}/>}
+                  </div>
+                  {bp.isMobile ? (
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:8,fontWeight:700,color:t.textMuted,lineHeight:1.1}}>{meta.icon}</div>
+                  ) : (
                     <>
-                      <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?2:4,marginBottom:bp.isMobile?1:3}}>
-                        <div style={{width:bp.isMobile?4:5,height:bp.isMobile?4:5,borderRadius:"50%",background:hasOverride?"#C084FC":meta.color,flexShrink:0}}/>
-                        {hasOverride&&<div style={{width:bp.isMobile?3:4,height:bp.isMobile?3:4,borderRadius:"50%",background:"#C084FC55"}}/>}
-                      </div>
-                      {bp.isMobile ? (
-                        <div style={{fontFamily:"Barlow Condensed",fontSize:8,fontWeight:700,color:"#777",lineHeight:1.1}}>{meta.icon}</div>
-                      ) : (
-                        <>
-                          <div style={{fontFamily:"Barlow Condensed",fontSize:10,fontWeight:700,color:"#777",lineHeight:1.2,marginBottom:3}}>{meta.icon} {workout.title.length>16?workout.title.slice(0,15)+"…":workout.title}</div>
-                          <div style={{fontSize:9,color:"#444",lineHeight:1.3}}>{workout.sets.length>13?workout.sets.slice(0,12)+"…":workout.sets}</div>
-                        </>
-                      )}
-                      {log?.status&&<div style={{position:"absolute",top:bp.isMobile?3:5,right:bp.isMobile?3:5,width:bp.isMobile?5:7,height:bp.isMobile?5:7,borderRadius:"50%",background:statusColor(log.status)!}}/>}
+                      <div style={{fontFamily:"Barlow Condensed",fontSize:10,fontWeight:700,color:t.textMuted,lineHeight:1.2,marginBottom:3}}>{meta.icon} {workout.title.length>16?workout.title.slice(0,15)+"…":workout.title}</div>
+                      <div style={{fontSize:9,color:t.textFaint,lineHeight:1.3}}>{workout.sets.length>13?workout.sets.slice(0,12)+"…":workout.sets}</div>
                     </>
                   )}
-                </div>
-              );
-            })}
-          </div>
-          {!bp.isMobile && (
-            <div style={{marginTop:16,display:"flex",flexWrap:"wrap",gap:12,borderTop:"1px solid #111",paddingTop:14}}>
-              {Object.entries(TYPE_META).map(([k,v])=>(
-                <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
-                  <div style={{width:6,height:6,borderRadius:"50%",background:v.color}}/>
-                  <span style={{fontSize:8,color:"#383838",letterSpacing:"0.1em"}}>{v.icon} {v.label}</span>
-                </div>
-              ))}
-              <div style={{display:"flex",gap:10,marginLeft:"auto"}}>
-                {([["#34D399","DONE"],["#FFE66D","PARTIAL"],["#F87171","MISSED"],["#C084FC","AI MODIFIED"]] as const).map(([c,l])=>(
-                  <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
-                    <div style={{width:6,height:6,borderRadius:"50%",background:c}}/>
-                    <span style={{fontSize:8,color:"#383838",letterSpacing:"0.1em"}}>{l}</span>
-                  </div>
+                  {log?.status&&<div style={{position:"absolute",top:bp.isMobile?3:5,right:bp.isMobile?3:5,width:bp.isMobile?5:7,height:bp.isMobile?5:7,borderRadius:"50%",background:statusColor(log.status)!}}/>}
+                </>
+              )}
+            </div>
+          );
+        };
+
+        return (
+          <div style={{padding:bp.isMobile?"10px 8px":"18px 20px"}}>
+            {/* Calendar header with mode switcher */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:bp.isMobile?10:16,gap:10,flexWrap:"wrap"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <button onClick={navPrev} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 10px":"5px 14px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?12:14}}>‹</button>
+                <button onClick={navNext} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 10px":"5px 14px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?12:14}}>›</button>
+                <button onClick={navToday} style={{background:"none",border:`1px solid ${t.border}`,borderRadius:4,color:t.textMuted,cursor:"pointer",padding:bp.isMobile?"4px 8px":"5px 12px",fontFamily:"Barlow Condensed",fontSize:bp.isMobile?9:10,letterSpacing:"0.1em"}}>TODAY</button>
+              </div>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?14:18,fontWeight:900,letterSpacing:"0.12em",color:t.text}}>{headerLabel}</div>
+              <div style={{display:"flex",gap:3}}>
+                {([["day","D"],["week","W"],["month","M"]] as const).map(([mode,label])=>(
+                  <button key={mode} onClick={()=>setCalendarMode(mode)} style={modeBtnStyle(calendarMode===mode)} title={`${mode} view (${label})`}>
+                    {label}
+                  </button>
                 ))}
               </div>
             </div>
-          )}
-        </div>
-      )}
+
+            {/* MONTH VIEW */}
+            {calendarMode==="month" && (
+              <>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:bp.isMobile?2:3,marginBottom:bp.isMobile?2:3}}>
+                  {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:bp.isMobile?7:9,letterSpacing:"0.2em",color:t.textGhost,padding:"3px 0"}}>{bp.isMobile?d.charAt(0):d}</div>)}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:bp.isMobile?2:3}}>
+                  {calDays.map((date,i)=>{
+                    if(!date)return<div key={i}/>;
+                    return renderDayCard(date, false);
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* WEEK VIEW */}
+            {calendarMode==="week" && (
+              <>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:4}}>
+                  {DAYS.map(d=><div key={d} style={{textAlign:"center",fontSize:10,letterSpacing:"0.15em",color:t.textGhost,padding:"4px 0",fontFamily:"Barlow Condensed",fontWeight:700}}>{d}</div>)}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
+                  {weekDates.map(date=>renderDayCard(date, true))}
+                </div>
+              </>
+            )}
+
+            {/* DAY VIEW (calendar day, not workout detail) */}
+            {calendarMode==="day" && (
+              <div style={{maxWidth:600}}>
+                {renderDayCard(focusDate, true)}
+              </div>
+            )}
+
+            {/* Legend */}
+            {!bp.isMobile && (
+              <div style={{marginTop:16,display:"flex",flexWrap:"wrap",gap:12,borderTop:`1px solid ${t.borderLight}`,paddingTop:14}}>
+                {Object.entries(TYPE_META).map(([k,v])=>(
+                  <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                    <div style={{width:6,height:6,borderRadius:"50%",background:v.color}}/>
+                    <span style={{fontSize:9,color:t.textFaint,letterSpacing:"0.1em"}}>{v.icon} {v.label}</span>
+                  </div>
+                ))}
+                <div style={{display:"flex",gap:10,marginLeft:"auto"}}>
+                  {([["#34D399","DONE"],["#FFE66D","PARTIAL"],["#F87171","MISSED"],["#C084FC","AI MODIFIED"]] as const).map(([c,l])=>(
+                    <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
+                      <div style={{width:6,height:6,borderRadius:"50%",background:c}}/>
+                      <span style={{fontSize:9,color:t.textFaint,letterSpacing:"0.1em"}}>{l}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:9,color:t.textGhost,letterSpacing:"0.1em",marginLeft:8}}>D / W / M to switch views</div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Day view */}
       {selectedDate && <DayView date={selectedDate} />}
@@ -977,38 +1162,38 @@ export default function HyroxCalendar() {
       {feedbackModal&&(()=>{
         const workout=getWorkoutForDate(keyToDate(feedbackModal));
         return(
-          <div style={{position:"fixed",inset:0,background:"#000000CC",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}}>
-            <div style={{background:"#0D0D0D",border:"1px solid #222",borderRadius:10,width:"100%",maxWidth:440,overflow:"hidden"}}>
+          <div style={{position:"fixed",inset:0,background:t.overlayBg,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}}>
+            <div style={{background:t.modalBg,border:`1px solid ${t.borderFocus}`,borderRadius:10,width:"100%",maxWidth:440,overflow:"hidden"}}>
               <div style={{height:3,background:"#FF6B35"}}/>
               <div style={{padding:"18px 22px"}}>
-                <div style={{fontFamily:"Barlow Condensed",fontSize:18,fontWeight:900,letterSpacing:"0.1em",marginBottom:3}}>LOG WORKOUT</div>
-                <div style={{fontSize:10,color:"#555",marginBottom:18}}>{workout?.title}</div>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:18,fontWeight:900,letterSpacing:"0.1em",color:t.text,marginBottom:3}}>LOG WORKOUT</div>
+                <div style={{fontSize:10,color:t.textFaint,marginBottom:18}}>{workout?.title}</div>
                 <div style={{marginBottom:14}}>
-                  <div style={{fontSize:8,letterSpacing:"0.2em",color:"#444",marginBottom:7}}>STATUS</div>
+                  <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>STATUS</div>
                   <div style={{display:"flex",gap:7}}>
                     {([["yes","✓ Completed","#34D399"],["partial","½ Partial","#FFE66D"],["no","✗ Missed","#F87171"]] as const).map(([val,lbl,c])=>(
-                      <button key={val} onClick={()=>setFeedbackForm(f=>({...f,completed:val}))} style={{flex:1,background:feedbackForm.completed===val?c+"22":"none",border:`1px solid ${feedbackForm.completed===val?c:"#222"}`,borderRadius:4,color:feedbackForm.completed===val?c:"#444",cursor:"pointer",padding:"7px 4px",fontSize:9,fontFamily:"DM Mono"}}>{lbl}</button>
+                      <button key={val} onClick={()=>setFeedbackForm(f=>({...f,completed:val}))} style={{flex:1,background:feedbackForm.completed===val?c+"22":"none",border:`1px solid ${feedbackForm.completed===val?c:t.borderFocus}`,borderRadius:4,color:feedbackForm.completed===val?c:t.textFaint,cursor:"pointer",padding:"7px 4px",fontSize:9,fontFamily:"DM Mono"}}>{lbl}</button>
                     ))}
                   </div>
                 </div>
                 <div style={{marginBottom:14}}>
-                  <div style={{display:"flex",justifyContent:"space-between",fontSize:8,letterSpacing:"0.2em",color:"#444",marginBottom:7}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>
                     <span>EFFORT (RPE)</span>
                     <span style={{color:feedbackForm.rpe>=8?"#F87171":feedbackForm.rpe>=6?"#FFE66D":"#34D399"}}>{feedbackForm.rpe}/10</span>
                   </div>
                   <input type="range" min={1} max={10} value={feedbackForm.rpe} onChange={e=>setFeedbackForm(f=>({...f,rpe:parseInt(e.target.value)}))} style={{width:"100%",accentColor:"#FF6B35"}}/>
                 </div>
                 <div style={{marginBottom:14}}>
-                  <div style={{fontSize:8,letterSpacing:"0.2em",color:"#444",marginBottom:7}}>AVG HR (optional)</div>
-                  <input type="number" placeholder={`Target: ${workout?.hr||"—"} bpm`} value={feedbackForm.hrAvg} onChange={e=>setFeedbackForm(f=>({...f,hrAvg:e.target.value}))} style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:4,color:"#CCC",padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none"}}/>
+                  <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>AVG HR (optional)</div>
+                  <input type="number" placeholder={`Target: ${workout?.hr||"—"} bpm`} value={feedbackForm.hrAvg} onChange={e=>setFeedbackForm(f=>({...f,hrAvg:e.target.value}))} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none"}}/>
                 </div>
                 <div style={{marginBottom:18}}>
-                  <div style={{fontSize:8,letterSpacing:"0.2em",color:"#444",marginBottom:7}}>NOTES</div>
-                  <textarea value={feedbackForm.notes} onChange={e=>setFeedbackForm(f=>({...f,notes:e.target.value}))} placeholder="legs heavy, strong on reps 4–5, struggled with carries…" rows={2} style={{width:"100%",background:"#111",border:"1px solid #222",borderRadius:4,color:"#CCC",padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none",resize:"none"}}/>
+                  <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>NOTES</div>
+                  <textarea value={feedbackForm.notes} onChange={e=>setFeedbackForm(f=>({...f,notes:e.target.value}))} placeholder="legs heavy, strong on reps 4–5, struggled with carries…" rows={2} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none",resize:"none"}}/>
                 </div>
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>setFeedbackModal(null)} style={{flex:1,background:"none",border:"1px solid #222",borderRadius:4,color:"#555",cursor:"pointer",padding:"9px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>CANCEL</button>
-                  <button onClick={()=>submitFeedback(feedbackModal)} style={{flex:2,background:"#FF6B35",border:"none",borderRadius:4,color:"#0A0A0A",cursor:"pointer",padding:"9px",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:900,letterSpacing:"0.1em"}}>SAVE + ADJUST</button>
+                  <button onClick={()=>setFeedbackModal(null)} style={{flex:1,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"9px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>CANCEL</button>
+                  <button onClick={()=>submitFeedback(feedbackModal)} style={{flex:2,background:"#FF6B35",border:"none",borderRadius:4,color:isDark?"#0A0A0A":"#FFF",cursor:"pointer",padding:"9px",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:900,letterSpacing:"0.1em"}}>SAVE + ADJUST</button>
                 </div>
               </div>
             </div>
