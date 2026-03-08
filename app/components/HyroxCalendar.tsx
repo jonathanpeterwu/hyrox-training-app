@@ -19,6 +19,46 @@ const DEFAULT_PROGRAM_WEEKS = 8;
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
+// ─── ATHLETE LEVELS ──────────────────────────────────────────────────────────
+type AthleteLevel = "beginner" | "intermediate" | "advanced" | "elite";
+
+interface LevelProfile {
+  label: string;
+  description: string;
+  targetTime: string;
+  thresholdPace: string;
+  subThreshPace: string;
+  z2Pace: string;
+  skiErg1k: string;
+  row1k: string;
+  runPctOfRace: number; // % of race time spent running
+  volMultiplierBase: number; // starting volume multiplier
+  intMultiplierBase: number; // starting intensity multiplier
+}
+
+const LEVEL_PROFILES: Record<AthleteLevel, LevelProfile> = {
+  beginner: {
+    label: "BEGINNER", description: "First Hyrox or target > 1:45",
+    targetTime: "Sub 1:45", thresholdPace: "8:30–9:00/mi", subThreshPace: "9:00–9:30/mi", z2Pace: "10:30–11:30/mi",
+    skiErg1k: "5:00–5:30", row1k: "4:45–5:15", runPctOfRace: 55, volMultiplierBase: 0.75, intMultiplierBase: 0.8,
+  },
+  intermediate: {
+    label: "INTERMEDIATE", description: "2nd–3rd race, target 1:30–1:45",
+    targetTime: "Sub 1:35", thresholdPace: "7:45–8:15/mi", subThreshPace: "8:15–8:45/mi", z2Pace: "9:30–10:30/mi",
+    skiErg1k: "4:30–5:00", row1k: "4:20–4:45", runPctOfRace: 52, volMultiplierBase: 0.9, intMultiplierBase: 0.9,
+  },
+  advanced: {
+    label: "ADVANCED", description: "Competitive, target 1:15–1:30",
+    targetTime: "Sub 1:30", thresholdPace: "7:20–7:45/mi", subThreshPace: "7:45–8:15/mi", z2Pace: "9:00–10:00/mi",
+    skiErg1k: "4:20–4:30", row1k: "4:10–4:30", runPctOfRace: 50, volMultiplierBase: 1.0, intMultiplierBase: 1.0,
+  },
+  elite: {
+    label: "ELITE", description: "Top 10%, target < 1:15",
+    targetTime: "Sub 1:15", thresholdPace: "6:45–7:15/mi", subThreshPace: "7:00–7:30/mi", z2Pace: "8:15–9:15/mi",
+    skiErg1k: "3:50–4:10", row1k: "3:45–4:05", runPctOfRace: 48, volMultiplierBase: 1.1, intMultiplierBase: 1.1,
+  },
+};
+
 const TYPE_META: Record<string, { color: string; label: string; icon: string }> = {
   threshold: { color: "#FF6B35", label: "THRESHOLD",   icon: "🔥" },
   strength:  { color: "#4ECDC4", label: "STRENGTH",    icon: "💪" },
@@ -212,21 +252,39 @@ function processFeedback(fb: Feedback) {
   return{fatigue:Math.max(1,Math.min(10,Math.round(fatigue*10)/10)),performance:Math.max(1,Math.min(10,Math.round(performance*10)/10))};
 }
 
-// ─── SYSTEM PROMPT ───────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are an elite Hyrox and endurance coach working with Johnny (Jonathan Wu), a highly driven athlete.
+// ─── SYSTEM PROMPT (built dynamically based on athlete level) ────────────────
+function buildSystemPrompt(level: AthleteLevel, hrZones: HRZones): string {
+  const lp = LEVEL_PROFILES[level];
+  return `You are an elite Hyrox and endurance coach. You have deep expertise in lactate threshold training, polarized training models, and Hyrox race strategy.
 
 ATHLETE PROFILE:
-- Hyrox target: Sub 1:25 finish
-- Threshold HR: 168 bpm
-- Z2 range: 135–148 bpm
-- Current running paces: threshold ~7:20–7:30/mi, sub-threshold ~7:45–8:15/mi, Z2 9:00–10:00/mi
-- SkiErg 1km benchmark: 4:20–4:30
-- Row 1km benchmark: 4:10–4:30
-- Sled push/pull: highest variance station
+- Level: ${lp.label} (${lp.description})
+- Hyrox target: ${lp.targetTime}
+- Threshold HR (LT2): ${hrZones.thresholdHr} bpm (~${Math.round(hrZones.thresholdHr/hrZones.maxHr*100)}% max)
+- Estimated LT1 (aerobic threshold): ~${Math.round(hrZones.thresholdHr * 0.87)} bpm (~${Math.round(hrZones.thresholdHr * 0.87 / hrZones.maxHr * 100)}% max)
+- Z2 ceiling: ${hrZones.z2Max} bpm
+- Max HR: ${hrZones.maxHr} bpm
+- Running paces: threshold ${lp.thresholdPace}, sub-threshold ${lp.subThreshPace}, Z2 ${lp.z2Pace}
+- SkiErg 1km: ${lp.skiErg1k}
+- Row 1km: ${lp.row1k}
 - Weekly structure: Mon threshold / Tue strength+stations / Wed sub-thresh or vest / Thu Z2 / Fri Hyrox sim / Sat heavy lift / Sun long run
-- Training program: configurable (default 8 weeks). Deloads auto-placed at midpoint and penultimate week. Final week is race week.
-- Also training for sub-3:40 marathon and Hyrox dual-discipline
-- 12-handicap golfer (plays Mon/Tue/Thu/Fri off-season)
+
+TRAINING SCIENCE CONTEXT:
+- Follow polarized 80/20 model: 80% below LT1, 20% above LT2, minimal Z3 (the "gray zone")
+- Threshold sessions: progress from 3×8min → 2×12min → 20min continuous within 4-week blocks
+- Target 25–30 min total at threshold pace per session, 10–15% of weekly running volume at LT1–LT2
+- Signs of overreaching: resting HR elevated 5+ bpm for multiple days, can't hit target intensities, HRV suppressed >1 week
+- Taper protocol: 7–14 days. Volume -25-30% week -2, volume -40-50% race week. Maintain intensity. Last hard session 3–5 days pre-race.
+- Running = ~${lp.runPctOfRace}% of total race time. Even pacing (<10% split variance) yields 5–10% faster finishes.
+- Budget race running pace 10–15% slower than standalone 10K pace to account for station fatigue.
+- Train with weights heavier than race day so competition weights feel manageable.
+
+HYROX STATION PRIORITIES:
+- Sled push/pull: highest variance station — focus training here
+- Wall balls: rhythm > speed. Steady breathing beats fast-then-stop
+- SkiErg: don't sprint first 300m. Steady pulls.
+- Sandbag lunges: keep bag high on upper back, elbows up to open lungs
+- Transitions: target 10–20 sec each (16 total = potential 4-min savings)
 
 WORKOUT ADJUSTMENT CAPABILITIES:
 When asked to adjust a specific workout, respond with a JSON block EXACTLY in this format (plus any explanation after):
@@ -257,6 +315,7 @@ When asked to adjust overall progression (e.g. make the whole plan easier/harder
 Be direct, data-driven, and specific. Use bpm numbers, pace targets, and rep counts.
 Keep explanations concise (3–5 sentences max unless asked for more).
 Always explain the physiological reason for any adjustment.`;
+}
 
 // ─── PARSE AI RESPONSE ───────────────────────────────────────────────────────
 function parseAIResponse(text: string): ParsedResponse {
@@ -326,10 +385,11 @@ interface AppSettings {
   programWeeks: number;
   hrZones: HRZones;
   themeMode: "dark" | "light";
+  athleteLevel: AthleteLevel;
 }
 
 function loadSettings(): AppSettings {
-  if (typeof window === "undefined") return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark" };
+  if (typeof window === "undefined") return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark", athleteLevel: "advanced" };
   try {
     const raw = localStorage.getItem("hyrox-settings");
     if (raw) {
@@ -339,14 +399,15 @@ function loadSettings(): AppSettings {
         programWeeks: parsed.programWeeks || DEFAULT_PROGRAM_WEEKS,
         hrZones: parsed.hrZones ? { ...DEFAULT_HR_ZONES, ...parsed.hrZones } : DEFAULT_HR_ZONES,
         themeMode: parsed.themeMode || "dark",
+        athleteLevel: parsed.athleteLevel || "advanced",
       };
     }
   } catch { /* ignore */ }
-  return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark" };
+  return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark", athleteLevel: "advanced" };
 }
 
-function saveSettings(startDate: Date, programWeeks: number, hrZones: HRZones, themeMode: "dark" | "light" = "dark") {
-  localStorage.setItem("hyrox-settings", JSON.stringify({ startDate: startDate.toISOString(), programWeeks, hrZones, themeMode }));
+function saveSettings(startDate: Date, programWeeks: number, hrZones: HRZones, themeMode: "dark" | "light" = "dark", athleteLevel: AthleteLevel = "advanced") {
+  localStorage.setItem("hyrox-settings", JSON.stringify({ startDate: startDate.toISOString(), programWeeks, hrZones, themeMode, athleteLevel }));
 }
 
 export default function HyroxCalendar() {
@@ -364,8 +425,10 @@ export default function HyroxCalendar() {
   const [programWeeks, setProgramWeeks] = useState(DEFAULT_PROGRAM_WEEKS);
   const [hrZones, setHrZones] = useState<HRZones>(DEFAULT_HR_ZONES);
   const [themeMode, setThemeMode] = useState<"dark"|"light">("dark");
+  const [athleteLevel, setAthleteLevel] = useState<AthleteLevel>("advanced");
   const t = themeMode === "dark" ? DARK_THEME : LIGHT_THEME;
   const isDark = themeMode === "dark";
+  const levelProfile = LEVEL_PROFILES[athleteLevel];
   // Chat state
   const [chatMode, setChatMode] = useState("day"); // "day" | "plan"
   const [dayMessages, setDayMessages] = useState<Record<string, ChatMessage[]>>({});
@@ -385,8 +448,13 @@ export default function HyroxCalendar() {
     setProgramWeeks(s.programWeeks);
     setHrZones(s.hrZones);
     setThemeMode(s.themeMode);
+    setAthleteLevel(s.athleteLevel);
     setCurrentMonth(s.startDate.getMonth());
     setCurrentYear(s.startDate.getFullYear());
+    // Register service worker for PWA
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
     // Load persisted data
     try {
       const log = localStorage.getItem("hyrox-workout-log");
@@ -522,7 +590,7 @@ export default function HyroxCalendar() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          system: SYSTEM_PROMPT,
+          system: buildSystemPrompt(athleteLevel, hrZones),
           messages: [...history, newUserMsg],
         }),
       });
@@ -568,19 +636,74 @@ export default function HyroxCalendar() {
     const messages = mode==="day" ? (dayMessages[dateStr!]||[]) : planMessages;
     const hasOverride = dateStr && workoutOverrides[dateStr];
 
-    const quickPrompts = mode==="day" ? [
-      "Make this workout easier — I'm feeling fatigued",
+    // Context-aware quick prompts based on workout type and athlete level
+    const currentWorkout = dateStr ? getWorkoutForDate(keyToDate(dateStr)) : null;
+    const workoutType = currentWorkout?.type || "";
+    const weekNum = currentWorkout?.weekNum || 0;
+
+    const dayPromptsBase = [
+      "Make this easier — I'm feeling fatigued",
       "Push the intensity — I'm feeling strong",
       "I only have 30 minutes — condense this",
-      "Swap this for a vest stair stepper session",
-      "What should I focus on for this workout?",
-    ] : [
-      "I'm running behind — compress weeks 5–6 intensity",
-      "Add an extra deload — I'm feeling overtrained",
-      "I want to peak harder before race week",
-      "Make the Hyrox sims more progressive",
-      "I have a race in 6 weeks not 8 — adjust",
     ];
+
+    // Add workout-type-specific prompts
+    const typePrompts: Record<string, string[]> = {
+      threshold: [
+        "Progress this to longer threshold intervals (3×8→2×12→20min continuous)",
+        "My HR is drifting above LT2 — should I back off or push through?",
+        "Convert to Norwegian double-threshold format",
+      ],
+      subthresh: [
+        "Am I in the gray zone? Should this be easier Z2 or harder threshold?",
+        "Add over/under intervals alternating above and below LT1",
+        "My resting HR is up 5+ bpm this week — is this overreaching?",
+      ],
+      z2: [
+        "Can I add 3–4 short strides (15–20 sec) to keep neuromuscular priming?",
+        "Should I keep this strictly nasal breathing or allow some mouth breathing?",
+        "Convert to a brick workout — add stations after the run",
+      ],
+      hyrox: [
+        "Help me plan even pacing — what split should I target per 1km run?",
+        "Focus this sim on my weakest stations (sled push/pull)",
+        "Add compromised running practice — run immediately after each station",
+        "How should I pace transitions? Target seconds per transition?",
+      ],
+      strength: [
+        "Should I train heavier than race weights to make competition feel easier?",
+        "Swap to strength endurance (12+ reps) — I'm in competition phase",
+        "Add sled push/pull practice with heavier than race weight",
+      ],
+      longrun: [
+        "Add a negative split — run last 30% at sub-threshold pace",
+        "Should I add Hyrox stations mid-run to practice compromised running?",
+        "What HR drift is acceptable over this duration?",
+      ],
+      vest: [
+        "Progress the vest weight — what increment is safe?",
+        "Convert to stair intervals instead of steady state",
+      ],
+    };
+
+    const dayPrompts = mode==="day" ? [
+      ...dayPromptsBase,
+      ...(typePrompts[workoutType] || ["What should I focus on for this workout?"]),
+      ...(weekNum >= (programWeeks - 1) ? ["I'm in taper — is this too much volume?"] : []),
+    ].slice(0, 6) : [];
+
+    const planPrompts = [
+      "Am I doing too much Zone 3? Switch me to polarized 80/20",
+      "My resting HR is elevated — am I overreaching? Adjust the plan",
+      "Add an extra deload week — I'm accumulating fatigue",
+      "Progress my threshold sessions: 3×8min → 2×12min → 20min continuous",
+      "I want to peak harder — build a 2-week race taper",
+      "Make the Hyrox sims more progressive with more stations each week",
+      "How should I distribute volume? What % at each intensity zone?",
+      "Retest my threshold zones — I think my fitness has improved",
+    ];
+
+    const quickPrompts = mode==="day" ? dayPrompts : planPrompts;
 
     return (
       <div style={{display:"flex",flexDirection:"column",height:"100%",background:t.chatBg}}>
@@ -833,12 +956,12 @@ export default function HyroxCalendar() {
       <div style={{borderBottom:`1px solid ${t.border}`,padding:bp.isMobile?"8px 10px":"10px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:bp.isMobile?4:8,minHeight:bp.isMobile?44:56,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?4:12,flexShrink:0}}>
           <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?18:26,fontWeight:900,color:"#FF6B35",letterSpacing:"0.08em",cursor:"pointer"}} onClick={()=>{setView("calendar");setSelectedDate(null);}}>HYROX</div>
-          {!bp.isMobile && <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:t.textGhost}}>ADAPTIVE TRAINING CALENDAR</div>}
+          {!bp.isMobile && <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:t.textGhost}}>ADAPTIVE TRAINING CALENDAR · {levelProfile.label} · {levelProfile.targetTime.toUpperCase()}</div>}
         </div>
         <div style={{display:"flex",gap:bp.isMobile?3:10,alignItems:"center",flexWrap:bp.isMobile?"nowrap":"wrap",overflow:bp.isMobile?"auto":"visible"}}>
           {/* Theme toggle — icon only on mobile */}
           <button
-            onClick={()=>{const next=isDark?"light":"dark";setThemeMode(next);saveSettings(startDate,programWeeks,hrZones,next);}}
+            onClick={()=>{const next=isDark?"light":"dark";setThemeMode(next);saveSettings(startDate,programWeeks,hrZones,next,athleteLevel);}}
             style={{background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 6px":"5px 12px",fontSize:bp.isMobile?12:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em",flexShrink:0}}
             title={`Switch to ${isDark?"light":"dark"} mode`}
           >
@@ -959,7 +1082,7 @@ export default function HyroxCalendar() {
               <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>APPEARANCE</div>
               <div style={{display:"flex",gap:8}}>
                 {(["dark","light"] as const).map(mode=>(
-                  <button key={mode} onClick={()=>{setThemeMode(mode);saveSettings(startDate,programWeeks,hrZones,mode);}} style={{
+                  <button key={mode} onClick={()=>{setThemeMode(mode);saveSettings(startDate,programWeeks,hrZones,mode,athleteLevel);}} style={{
                     flex:1,padding:"12px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",
                     background:themeMode===mode?(mode==="dark"?"#FF6B3522":"#FF6B3522"):t.bgInput,
                     border:`1px solid ${themeMode===mode?"#FF6B35":t.borderFocus}`,
@@ -971,6 +1094,35 @@ export default function HyroxCalendar() {
               </div>
             </div>
 
+            {/* Athlete Level */}
+            <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:6}}>ATHLETE LEVEL</div>
+              <div style={{fontSize:11,color:t.textFaint,marginBottom:14,lineHeight:1.5}}>Sets pace targets, volume scaling, and AI coaching context</div>
+              <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr 1fr":"repeat(4,1fr)",gap:8}}>
+                {(Object.entries(LEVEL_PROFILES) as [AthleteLevel, LevelProfile][]).map(([key, lp])=>(
+                  <button key={key} onClick={()=>{setAthleteLevel(key);saveSettings(startDate,programWeeks,hrZones,themeMode,key);}} style={{
+                    background:athleteLevel===key?"#FF6B3518":"transparent",
+                    border:`1px solid ${athleteLevel===key?"#FF6B35":t.borderFocus}`,
+                    borderRadius:6,cursor:"pointer",padding:"12px 10px",textAlign:"left",
+                  }}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:900,letterSpacing:"0.1em",color:athleteLevel===key?"#FF6B35":t.textMuted,marginBottom:4}}>{lp.label}</div>
+                    <div style={{fontSize:10,color:t.textFaint,lineHeight:1.4,marginBottom:6}}>{lp.description}</div>
+                    <div style={{fontSize:9,color:athleteLevel===key?"#FF6B35":t.textGhost}}>Target: {lp.targetTime}</div>
+                  </button>
+                ))}
+              </div>
+              {/* Level details */}
+              <div style={{marginTop:14,padding:"12px 14px",background:t.bgInput,borderRadius:6,fontSize:11,color:t.textMuted,lineHeight:1.8}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:11,letterSpacing:"0.1em",color:"#FF6B35",marginBottom:6}}>CURRENT TARGETS — {levelProfile.label}</div>
+                <div><span style={{color:t.textFaint}}>Threshold pace:</span> {levelProfile.thresholdPace}</div>
+                <div><span style={{color:t.textFaint}}>Sub-threshold:</span> {levelProfile.subThreshPace}</div>
+                <div><span style={{color:t.textFaint}}>Zone 2:</span> {levelProfile.z2Pace}</div>
+                <div><span style={{color:t.textFaint}}>SkiErg 1km:</span> {levelProfile.skiErg1k}</div>
+                <div><span style={{color:t.textFaint}}>Row 1km:</span> {levelProfile.row1k}</div>
+                <div style={{marginTop:6,fontSize:10,color:t.textGhost}}>Running ≈ {levelProfile.runPctOfRace}% of total race time. Budget paces 10–15% slower than standalone 10K.</div>
+              </div>
+            </div>
+
             {/* Program config */}
             <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
               <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>PROGRAM</div>
@@ -979,13 +1131,13 @@ export default function HyroxCalendar() {
                   <div style={labelStyle}>START DATE</div>
                   <input type="date" value={inputDateStr(startDate)} onChange={e=>{
                     const d = new Date(e.target.value + "T00:00:00");
-                    if(!isNaN(d.getTime())){setStartDate(d);saveSettings(d,programWeeks,hrZones,themeMode);setCurrentMonth(d.getMonth());setCurrentYear(d.getFullYear());}
+                    if(!isNaN(d.getTime())){setStartDate(d);saveSettings(d,programWeeks,hrZones,themeMode,athleteLevel);setCurrentMonth(d.getMonth());setCurrentYear(d.getFullYear());}
                   }} style={fieldStyle} />
                 </div>
                 <div>
                   <div style={labelStyle}>PROGRAM WEEKS</div>
                   <select value={programWeeks} onChange={e=>{
-                    const w=parseInt(e.target.value);setProgramWeeks(w);saveSettings(startDate,w,hrZones,themeMode);
+                    const w=parseInt(e.target.value);setProgramWeeks(w);saveSettings(startDate,w,hrZones,themeMode,athleteLevel);
                   }} style={{...fieldStyle,cursor:"pointer"}}>
                     {[4,5,6,7,8,9,10,11,12].map(w=><option key={w} value={w}>{w} weeks</option>)}
                   </select>
@@ -1015,7 +1167,7 @@ export default function HyroxCalendar() {
                       if(!isNaN(age)&&age>10&&age<100){
                         const maxHr=220-age;
                         const zones=zonesFromMaxHr(maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1025,7 +1177,7 @@ export default function HyroxCalendar() {
                       const maxHr=parseInt(e.target.value);
                       if(!isNaN(maxHr)&&maxHr>100&&maxHr<230){
                         const zones=zonesFromMaxHr(maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1035,7 +1187,7 @@ export default function HyroxCalendar() {
                       const thr=parseInt(e.target.value);
                       if(!isNaN(thr)&&thr>100&&thr<230){
                         const zones=zonesFromThreshold(thr,hrZones.maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1063,7 +1215,7 @@ export default function HyroxCalendar() {
                         if(!isNaN(val)&&val>0&&val<250){
                           const updated={...hrZones,[key]:val};
                           setHrZones(updated);
-                          saveSettings(startDate,programWeeks,updated,themeMode);
+                          saveSettings(startDate,programWeeks,updated,themeMode,athleteLevel);
                         }
                       }} style={{...fieldStyle,width:"100%"}} />
                       <span style={{fontSize:11,color:t.textFaint,flexShrink:0}}>bpm</span>
@@ -1084,7 +1236,7 @@ export default function HyroxCalendar() {
             {/* Reset */}
             <button onClick={()=>{
               setStartDate(DEFAULT_START_DATE);setProgramWeeks(DEFAULT_PROGRAM_WEEKS);setHrZones(DEFAULT_HR_ZONES);
-              saveSettings(DEFAULT_START_DATE,DEFAULT_PROGRAM_WEEKS,DEFAULT_HR_ZONES,themeMode);
+              saveSettings(DEFAULT_START_DATE,DEFAULT_PROGRAM_WEEKS,DEFAULT_HR_ZONES,themeMode,athleteLevel);
               setCurrentMonth(DEFAULT_START_DATE.getMonth());setCurrentYear(DEFAULT_START_DATE.getFullYear());
             }} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"10px 18px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>
               RESET TO DEFAULTS
