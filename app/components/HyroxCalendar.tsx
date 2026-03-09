@@ -567,6 +567,9 @@ export default function HyroxCalendar() {
   const [workoutLog, setWorkoutLog] = useState<Record<string, LogEntry>>({});
   const [workoutOverrides, setWorkoutOverrides] = useState<Record<string, Workout>>({});
   const [progressionOverrides, setProgressionOverrides] = useState<Record<number, { fatigueOverride?: number; performanceOverride?: number }>>({});
+  const [authEmailInput, setAuthEmailInput] = useState("");
+  const [authEmailSent, setAuthEmailSent] = useState(false);
+  const [authEmailError, setAuthEmailError] = useState("");
   const [feedbackModal, setFeedbackModal] = useState<string | null>(null);
   const [feedbackForm, setFeedbackForm] = useState({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
   const [manualLogModal, setManualLogModal] = useState<string | null>(null);
@@ -1787,27 +1790,23 @@ export default function HyroxCalendar() {
                       <svg width="16" height="16" viewBox="0 0 24 24" fill={t.textMuted}><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
                       CONTINUE WITH GITHUB
                     </button>
-                    {(()=>{
-                      const [emailInput, setEmailInput] = useState("");
-                      const [emailSent, setEmailSent] = useState(false);
-                      const [emailError, setEmailError] = useState("");
-                      if (emailSent) return <div style={{textAlign:"center",padding:"12px",background:"#34D39922",borderRadius:6,border:"1px solid #34D39944",color:"#34D399",fontSize:11}}>Check your email for a magic link!</div>;
-                      return (
-                        <div style={{display:"flex",gap:6}}>
-                          <input type="email" placeholder="Email for magic link" value={emailInput} onChange={e=>setEmailInput(e.target.value)}
-                            style={{flex:1,background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"10px 12px",fontSize:12,fontFamily:"DM Mono",outline:"none"}}/>
-                          <button onClick={async ()=>{
-                            setEmailError("");
-                            const {error}=await signInWithEmail(emailInput);
-                            if(error) setEmailError(error.message); else setEmailSent(true);
-                          }} disabled={!emailInput.includes("@")}
-                            style={{background:emailInput.includes("@")?"#60A5FA":"#333",border:"none",borderRadius:6,color:isDark?"#0A0A0A":"#FFF",cursor:emailInput.includes("@")?"pointer":"not-allowed",padding:"10px 16px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.1em",opacity:emailInput.includes("@")?1:0.5,flexShrink:0}}>
-                            SEND LINK
-                          </button>
-                          {emailError&&<div style={{fontSize:10,color:"#F87171",marginTop:4}}>{emailError}</div>}
-                        </div>
-                      );
-                    })()}
+                    {authEmailSent ? (
+                      <div style={{textAlign:"center",padding:"12px",background:"#34D39922",borderRadius:6,border:"1px solid #34D39944",color:"#34D399",fontSize:11}}>Check your email for a magic link!</div>
+                    ) : (
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        <input type="email" placeholder="Email for magic link" value={authEmailInput} onChange={e=>setAuthEmailInput(e.target.value)}
+                          style={{flex:1,minWidth:0,background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"10px 12px",fontSize:12,fontFamily:"DM Mono",outline:"none"}}/>
+                        <button onClick={async ()=>{
+                          setAuthEmailError("");
+                          const {error}=await signInWithEmail(authEmailInput);
+                          if(error) setAuthEmailError((error as {message:string}).message); else setAuthEmailSent(true);
+                        }} disabled={!authEmailInput.includes("@")}
+                          style={{background:authEmailInput.includes("@")?"#60A5FA":"#333",border:"none",borderRadius:6,color:isDark?"#0A0A0A":"#FFF",cursor:authEmailInput.includes("@")?"pointer":"not-allowed",padding:"10px 16px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.1em",opacity:authEmailInput.includes("@")?1:0.5,flexShrink:0}}>
+                          SEND LINK
+                        </button>
+                        {authEmailError&&<div style={{fontSize:10,color:"#F87171",marginTop:4,width:"100%"}}>{authEmailError}</div>}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
