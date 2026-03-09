@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useSupabaseSync } from "../../lib/useSupabaseSync";
 
 // ─── RESPONSIVE HOOK ─────────────────────────────────────────────────────────
 function useBreakpoint() {
@@ -554,6 +555,11 @@ function saveSettings(startDate: Date, programWeeks: number, hrZones: HRZones, t
 }
 
 export default function HyroxCalendar() {
+  const { user, authLoading, syncStatus, isConfigured: supabaseConfigured, signInWithGoogle, signInWithGithub, signInWithEmail, signOut, schedulePush } = useSupabaseSync();
+  const saveAndSync = useCallback((...args: Parameters<typeof saveSettings>) => {
+    saveSettings(...args);
+    schedulePush();
+  }, [schedulePush]);
   const [view, setView] = useState("calendar");
   const [currentMonth, setCurrentMonth] = useState(2);
   const [currentYear, setCurrentYear] = useState(2026);
@@ -644,12 +650,39 @@ export default function HyroxCalendar() {
     } catch { /* ignore corrupt data */ }
   }, []);
 
-  // Persist data changes to localStorage
-  useEffect(() => { try { localStorage.setItem("hyrox-workout-log", JSON.stringify(workoutLog)); } catch {} }, [workoutLog]);
-  useEffect(() => { try { localStorage.setItem("hyrox-workout-overrides", JSON.stringify(workoutOverrides)); } catch {} }, [workoutOverrides]);
-  useEffect(() => { try { localStorage.setItem("hyrox-progression-overrides", JSON.stringify(progressionOverrides)); } catch {} }, [progressionOverrides]);
-  useEffect(() => { try { localStorage.setItem("hyrox-day-messages", JSON.stringify(dayMessages)); } catch {} }, [dayMessages]);
-  useEffect(() => { try { localStorage.setItem("hyrox-plan-messages", JSON.stringify(planMessages)); } catch {} }, [planMessages]);
+  // Persist data changes to localStorage + schedule Supabase sync
+  useEffect(() => { try { localStorage.setItem("hyrox-workout-log", JSON.stringify(workoutLog)); schedulePush(); } catch {} }, [workoutLog, schedulePush]);
+  useEffect(() => { try { localStorage.setItem("hyrox-workout-overrides", JSON.stringify(workoutOverrides)); schedulePush(); } catch {} }, [workoutOverrides, schedulePush]);
+  useEffect(() => { try { localStorage.setItem("hyrox-progression-overrides", JSON.stringify(progressionOverrides)); schedulePush(); } catch {} }, [progressionOverrides, schedulePush]);
+  useEffect(() => { try { localStorage.setItem("hyrox-day-messages", JSON.stringify(dayMessages)); schedulePush(); } catch {} }, [dayMessages, schedulePush]);
+  useEffect(() => { try { localStorage.setItem("hyrox-plan-messages", JSON.stringify(planMessages)); schedulePush(); } catch {} }, [planMessages, schedulePush]);
+
+  // Listen for Supabase pull events to reload state from localStorage
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const log = localStorage.getItem("hyrox-workout-log");
+        if (log) setWorkoutLog(JSON.parse(log));
+        const wo = localStorage.getItem("hyrox-workout-overrides");
+        if (wo) setWorkoutOverrides(JSON.parse(wo));
+        const po = localStorage.getItem("hyrox-progression-overrides");
+        if (po) setProgressionOverrides(JSON.parse(po));
+        const dm = localStorage.getItem("hyrox-day-messages");
+        if (dm) setDayMessages(JSON.parse(dm));
+        const pm = localStorage.getItem("hyrox-plan-messages");
+        if (pm) setPlanMessages(JSON.parse(pm));
+        // Also reload settings
+        const s = loadSettings();
+        setStartDate(s.startDate);
+        setProgramWeeks(s.programWeeks);
+        setHrZones(s.hrZones);
+        setThemeMode(s.themeMode);
+        setAthleteLevel(s.athleteLevel);
+      } catch { /* ignore */ }
+    };
+    window.addEventListener("supabase-sync-pull", handler);
+    return () => window.removeEventListener("supabase-sync-pull", handler);
+  }, []);
 
   // Keyboard shortcuts: D/W/M for calendar modes, arrows for navigation
   useEffect(() => {
@@ -1427,7 +1460,7 @@ export default function HyroxCalendar() {
         <div style={{display:"flex",gap:bp.isMobile?3:10,alignItems:"center",flexWrap:bp.isMobile?"nowrap":"wrap",overflow:bp.isMobile?"auto":"visible"}}>
           {/* Theme toggle — icon only on mobile */}
           <button
-            onClick={()=>{const next=isDark?"light":"dark";setThemeMode(next);saveSettings(startDate,programWeeks,hrZones,next,athleteLevel);}}
+            onClick={()=>{const next=isDark?"light":"dark";setThemeMode(next);saveAndSync(startDate,programWeeks,hrZones,next,athleteLevel);}}
             style={{background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 6px":"5px 12px",fontSize:bp.isMobile?12:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em",flexShrink:0}}
             title={`Switch to ${isDark?"light":"dark"} mode`}
           >
@@ -1459,6 +1492,17 @@ export default function HyroxCalendar() {
           >
             ⚙{bp.isMobile?"":" SETTINGS"}
           </button>
+          {/* User avatar + sync status */}
+          {!supabaseConfigured ? null : user ? (
+            <div onClick={()=>{setSelectedDate(null);setView("settings");}} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",padding:"3px 8px",borderRadius:4,background:t.bgInput,border:`1px solid ${t.borderLight}`}} title={`${user.email} — ${syncStatus}`}>
+              <div style={{width:20,height:20,borderRadius:"50%",background:"#FF6B3533",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900,color:"#FF6B35",fontFamily:"Barlow Condensed"}}>{(user.email||"?")[0].toUpperCase()}</div>
+              <div style={{width:6,height:6,borderRadius:"50%",background:syncStatus==="synced"?"#34D399":syncStatus==="syncing"?"#FFE66D":syncStatus==="error"?"#F87171":"#4B5563"}}/>
+            </div>
+          ) : (
+            <button onClick={()=>{setSelectedDate(null);setView("settings");}} style={{background:"none",border:`1px dashed ${t.borderFocus}`,borderRadius:4,color:t.textGhost,cursor:"pointer",padding:bp.isMobile?"4px 7px":"4px 10px",fontSize:9,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>
+              SIGN IN
+            </button>
+          )}
           {!bp.isMobile && (
             <div style={{fontSize:9,color:t.textGhost,letterSpacing:"0.1em"}}>
               {Object.values(workoutLog).filter(l=>l.status==="yes").length} DONE ·&nbsp;
@@ -1548,7 +1592,7 @@ export default function HyroxCalendar() {
               <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>APPEARANCE</div>
               <div style={{display:"flex",gap:8}}>
                 {(["dark","light"] as const).map(mode=>(
-                  <button key={mode} onClick={()=>{setThemeMode(mode);saveSettings(startDate,programWeeks,hrZones,mode,athleteLevel);}} style={{
+                  <button key={mode} onClick={()=>{setThemeMode(mode);saveAndSync(startDate,programWeeks,hrZones,mode,athleteLevel);}} style={{
                     flex:1,padding:"12px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",
                     background:themeMode===mode?(mode==="dark"?"#FF6B3522":"#FF6B3522"):t.bgInput,
                     border:`1px solid ${themeMode===mode?"#FF6B35":t.borderFocus}`,
@@ -1566,7 +1610,7 @@ export default function HyroxCalendar() {
               <div style={{fontSize:11,color:t.textFaint,marginBottom:14,lineHeight:1.5}}>Sets pace targets, volume scaling, and AI coaching context</div>
               <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr 1fr":"repeat(4,1fr)",gap:8}}>
                 {(Object.entries(LEVEL_PROFILES) as [AthleteLevel, LevelProfile][]).map(([key, lp])=>(
-                  <button key={key} onClick={()=>{setAthleteLevel(key);saveSettings(startDate,programWeeks,hrZones,themeMode,key);}} style={{
+                  <button key={key} onClick={()=>{setAthleteLevel(key);saveAndSync(startDate,programWeeks,hrZones,themeMode,key);}} style={{
                     background:athleteLevel===key?"#FF6B3518":"transparent",
                     border:`1px solid ${athleteLevel===key?"#FF6B35":t.borderFocus}`,
                     borderRadius:6,cursor:"pointer",padding:"12px 10px",textAlign:"left",
@@ -1597,13 +1641,13 @@ export default function HyroxCalendar() {
                   <div style={labelStyle}>START DATE</div>
                   <input type="date" value={inputDateStr(startDate)} onChange={e=>{
                     const d = new Date(e.target.value + "T00:00:00");
-                    if(!isNaN(d.getTime())){setStartDate(d);saveSettings(d,programWeeks,hrZones,themeMode,athleteLevel);setCurrentMonth(d.getMonth());setCurrentYear(d.getFullYear());}
+                    if(!isNaN(d.getTime())){setStartDate(d);saveAndSync(d,programWeeks,hrZones,themeMode,athleteLevel);setCurrentMonth(d.getMonth());setCurrentYear(d.getFullYear());}
                   }} style={fieldStyle} />
                 </div>
                 <div>
                   <div style={labelStyle}>PROGRAM WEEKS</div>
                   <select value={programWeeks} onChange={e=>{
-                    const w=parseInt(e.target.value);setProgramWeeks(w);saveSettings(startDate,w,hrZones,themeMode,athleteLevel);
+                    const w=parseInt(e.target.value);setProgramWeeks(w);saveAndSync(startDate,w,hrZones,themeMode,athleteLevel);
                   }} style={{...fieldStyle,cursor:"pointer"}}>
                     {[4,5,6,7,8,9,10,11,12].map(w=><option key={w} value={w}>{w} weeks</option>)}
                   </select>
@@ -1633,7 +1677,7 @@ export default function HyroxCalendar() {
                       if(!isNaN(age)&&age>10&&age<100){
                         const maxHr=220-age;
                         const zones=zonesFromMaxHr(maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
+                        setHrZones(zones);saveAndSync(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1643,7 +1687,7 @@ export default function HyroxCalendar() {
                       const maxHr=parseInt(e.target.value);
                       if(!isNaN(maxHr)&&maxHr>100&&maxHr<230){
                         const zones=zonesFromMaxHr(maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
+                        setHrZones(zones);saveAndSync(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1653,7 +1697,7 @@ export default function HyroxCalendar() {
                       const thr=parseInt(e.target.value);
                       if(!isNaN(thr)&&thr>100&&thr<230){
                         const zones=zonesFromThreshold(thr,hrZones.maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
+                        setHrZones(zones);saveAndSync(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1681,7 +1725,7 @@ export default function HyroxCalendar() {
                         if(!isNaN(val)&&val>0&&val<250){
                           const updated={...hrZones,[key]:val};
                           setHrZones(updated);
-                          saveSettings(startDate,programWeeks,updated,themeMode,athleteLevel);
+                          saveAndSync(startDate,programWeeks,updated,themeMode,athleteLevel);
                         }
                       }} style={{...fieldStyle,width:"100%"}} />
                       <span style={{fontSize:11,color:t.textFaint,flexShrink:0}}>bpm</span>
@@ -1699,10 +1743,80 @@ export default function HyroxCalendar() {
               </div>
             </div>
 
+            {/* Account & Sync */}
+            <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>ACCOUNT & SYNC</div>
+              {!supabaseConfigured ? (
+                <div style={{fontSize:11,color:t.textFaint,lineHeight:1.6}}>
+                  Cloud sync is not configured. Data is saved locally on this device. To enable cross-device sync, add Supabase credentials to your environment variables.
+                </div>
+              ) : authLoading ? (
+                <div style={{fontSize:12,color:t.textFaint,textAlign:"center",padding:16}}>Loading…</div>
+              ) : user ? (
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14,padding:"12px 14px",background:t.bgInput,borderRadius:6,border:`1px solid ${t.borderLight}`}}>
+                    <div style={{width:36,height:36,borderRadius:"50%",background:"#FF6B3522",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:900,color:"#FF6B35",fontFamily:"Barlow Condensed",flexShrink:0}}>
+                      {(user.email || "?")[0].toUpperCase()}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,color:t.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{user.email}</div>
+                      <div style={{fontSize:10,color:t.textFaint,marginTop:2}}>
+                        {syncStatus === "synced" ? "✓ Data synced" : syncStatus === "syncing" ? "↻ Syncing…" : syncStatus === "error" ? "✗ Sync error" : "Cloud sync enabled"}
+                      </div>
+                    </div>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:syncStatus==="synced"?"#34D399":syncStatus==="syncing"?"#FFE66D":syncStatus==="error"?"#F87171":"#4B5563",flexShrink:0}}/>
+                  </div>
+                  <div style={{fontSize:10,color:t.textGhost,marginBottom:14,lineHeight:1.6}}>
+                    Your training data syncs automatically across devices. Changes save to the cloud within a few seconds.
+                  </div>
+                  <button onClick={signOut} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"9px 18px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>
+                    SIGN OUT
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{fontSize:11,color:t.textFaint,marginBottom:14,lineHeight:1.6}}>
+                    Sign in to sync your training data across devices. Your data is currently saved locally on this device only.
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    <button onClick={signInWithGoogle} style={{background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textMuted,cursor:"pointer",padding:"11px 16px",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.08em",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                      <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                      CONTINUE WITH GOOGLE
+                    </button>
+                    <button onClick={signInWithGithub} style={{background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textMuted,cursor:"pointer",padding:"11px 16px",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.08em",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill={t.textMuted}><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                      CONTINUE WITH GITHUB
+                    </button>
+                    {(()=>{
+                      const [emailInput, setEmailInput] = useState("");
+                      const [emailSent, setEmailSent] = useState(false);
+                      const [emailError, setEmailError] = useState("");
+                      if (emailSent) return <div style={{textAlign:"center",padding:"12px",background:"#34D39922",borderRadius:6,border:"1px solid #34D39944",color:"#34D399",fontSize:11}}>Check your email for a magic link!</div>;
+                      return (
+                        <div style={{display:"flex",gap:6}}>
+                          <input type="email" placeholder="Email for magic link" value={emailInput} onChange={e=>setEmailInput(e.target.value)}
+                            style={{flex:1,background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"10px 12px",fontSize:12,fontFamily:"DM Mono",outline:"none"}}/>
+                          <button onClick={async ()=>{
+                            setEmailError("");
+                            const {error}=await signInWithEmail(emailInput);
+                            if(error) setEmailError(error.message); else setEmailSent(true);
+                          }} disabled={!emailInput.includes("@")}
+                            style={{background:emailInput.includes("@")?"#60A5FA":"#333",border:"none",borderRadius:6,color:isDark?"#0A0A0A":"#FFF",cursor:emailInput.includes("@")?"pointer":"not-allowed",padding:"10px 16px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.1em",opacity:emailInput.includes("@")?1:0.5,flexShrink:0}}>
+                            SEND LINK
+                          </button>
+                          {emailError&&<div style={{fontSize:10,color:"#F87171",marginTop:4}}>{emailError}</div>}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Reset */}
             <button onClick={()=>{
               setStartDate(DEFAULT_START_DATE);setProgramWeeks(DEFAULT_PROGRAM_WEEKS);setHrZones(DEFAULT_HR_ZONES);
-              saveSettings(DEFAULT_START_DATE,DEFAULT_PROGRAM_WEEKS,DEFAULT_HR_ZONES,themeMode,athleteLevel);
+              saveAndSync(DEFAULT_START_DATE,DEFAULT_PROGRAM_WEEKS,DEFAULT_HR_ZONES,themeMode,athleteLevel);
               setCurrentMonth(DEFAULT_START_DATE.getMonth());setCurrentYear(DEFAULT_START_DATE.getFullYear());
             }} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"10px 18px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>
               RESET TO DEFAULTS
