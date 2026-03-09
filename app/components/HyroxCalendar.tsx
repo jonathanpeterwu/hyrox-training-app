@@ -19,6 +19,46 @@ const DEFAULT_PROGRAM_WEEKS = 8;
 const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
+// ─── ATHLETE LEVELS ──────────────────────────────────────────────────────────
+type AthleteLevel = "beginner" | "intermediate" | "advanced" | "elite";
+
+interface LevelProfile {
+  label: string;
+  description: string;
+  targetTime: string;
+  thresholdPace: string;
+  subThreshPace: string;
+  z2Pace: string;
+  skiErg1k: string;
+  row1k: string;
+  runPctOfRace: number; // % of race time spent running
+  volMultiplierBase: number; // starting volume multiplier
+  intMultiplierBase: number; // starting intensity multiplier
+}
+
+const LEVEL_PROFILES: Record<AthleteLevel, LevelProfile> = {
+  beginner: {
+    label: "BEGINNER", description: "First Hyrox or target > 1:45",
+    targetTime: "Sub 1:45", thresholdPace: "8:30–9:00/mi", subThreshPace: "9:00–9:30/mi", z2Pace: "10:30–11:30/mi",
+    skiErg1k: "5:00–5:30", row1k: "4:45–5:15", runPctOfRace: 55, volMultiplierBase: 0.75, intMultiplierBase: 0.8,
+  },
+  intermediate: {
+    label: "INTERMEDIATE", description: "2nd–3rd race, target 1:30–1:45",
+    targetTime: "Sub 1:35", thresholdPace: "7:45–8:15/mi", subThreshPace: "8:15–8:45/mi", z2Pace: "9:30–10:30/mi",
+    skiErg1k: "4:30–5:00", row1k: "4:20–4:45", runPctOfRace: 52, volMultiplierBase: 0.9, intMultiplierBase: 0.9,
+  },
+  advanced: {
+    label: "ADVANCED", description: "Competitive, target 1:15–1:30",
+    targetTime: "Sub 1:30", thresholdPace: "7:20–7:45/mi", subThreshPace: "7:45–8:15/mi", z2Pace: "9:00–10:00/mi",
+    skiErg1k: "4:20–4:30", row1k: "4:10–4:30", runPctOfRace: 50, volMultiplierBase: 1.0, intMultiplierBase: 1.0,
+  },
+  elite: {
+    label: "ELITE", description: "Top 10%, target < 1:15",
+    targetTime: "Sub 1:15", thresholdPace: "6:45–7:15/mi", subThreshPace: "7:00–7:30/mi", z2Pace: "8:15–9:15/mi",
+    skiErg1k: "3:50–4:10", row1k: "3:45–4:05", runPctOfRace: 48, volMultiplierBase: 1.1, intMultiplierBase: 1.1,
+  },
+};
+
 const TYPE_META: Record<string, { color: string; label: string; icon: string }> = {
   threshold: { color: "#FF6B35", label: "THRESHOLD",   icon: "🔥" },
   strength:  { color: "#4ECDC4", label: "STRENGTH",    icon: "💪" },
@@ -80,9 +120,22 @@ interface Adjustments {
 interface Feedback {
   rpe: number;
   hrAvg: number | null;
+  hrMax: number | null;
   hrTarget: number | null;
+  hrTargetLow: number | null;
+  paceAvg: string;
+  paceTarget: string;
   completed: string;
   notes: string;
+  workoutType: string;
+}
+
+interface ManualActivity {
+  activity: string;
+  duration: string;
+  metrics: { label: string; value: string }[];
+  notes: string;
+  timestamp: number;
 }
 
 interface LogEntry {
@@ -95,7 +148,18 @@ interface LogEntry {
     hrMax?: number | null;
     paceAvg?: string;
   };
-  adjustments?: { fatigue: number; performance: number };
+  adjustments?: {
+    fatigue: number;
+    performance: number;
+    breakdown: {
+      rpeScore: number;
+      hrScore: number;
+      paceScore: number;
+      completionScore: number;
+      sentimentScore: number;
+    };
+  };
+  manualActivities?: ManualActivity[];
 }
 
 interface ParsedResponse {
@@ -201,32 +265,169 @@ function buildLongRun(w: number,vm: number,deload: boolean,raceWeek: boolean): W
   return{type:"longrun",title:"Long Aerobic Run",sets:`${mins} min`,pace:deload?"9:30–10:15/mi":"8:45–9:30/mi",rest:"—",hr:"140–162",notes:`Z2 first ${Math.round(mins*0.7)} min, Z3 drift final ${Math.round(mins*0.3)} min.`};
 }
 
-function processFeedback(fb: Feedback) {
-  const {rpe=5,hrAvg=null,hrTarget=null,completed="yes",notes=""}=fb;
-  let fatigue=rpe, performance=10-rpe+2;
-  if(hrAvg&&hrTarget){const d=hrAvg-hrTarget;if(d>8){fatigue+=1.5;performance-=1;}else if(d<-8){fatigue-=1;performance+=1;}}
-  if(completed==="partial"){fatigue+=1;performance-=1;}
-  if(completed==="no"){fatigue+=2;performance-=2;}
-  ["exhausted","sore","struggled","dying","heavy","tired"].forEach(k=>{if(notes.toLowerCase().includes(k))fatigue+=0.5;});
-  ["strong","easy","felt great","crushed","solid","good"].forEach(k=>{if(notes.toLowerCase().includes(k)){fatigue-=0.3;performance+=0.3;}});
-  return{fatigue:Math.max(1,Math.min(10,Math.round(fatigue*10)/10)),performance:Math.max(1,Math.min(10,Math.round(performance*10)/10))};
+// Parse pace string "8:30" → seconds per mile
+function paceToSeconds(pace: string): number | null {
+  const match = pace.match(/(\d+):(\d+)/);
+  if (!match) return null;
+  return parseInt(match[1]) * 60 + parseInt(match[2]);
 }
 
-// ─── SYSTEM PROMPT ───────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are an elite Hyrox and endurance coach working with Johnny (Jonathan Wu), a highly driven athlete.
+// Get midpoint of a pace range like "7:20–7:45/mi"
+function parsePaceRange(paceStr: string): { low: number | null; high: number | null; mid: number | null } {
+  const parts = paceStr.replace(/\/mi/gi, "").split(/[–-]/);
+  const low = paceToSeconds(parts[0]?.trim());
+  const high = parts[1] ? paceToSeconds(parts[1]?.trim()) : low;
+  return { low, high, mid: low && high ? (low + high) / 2 : low };
+}
+
+function processFeedback(fb: Feedback) {
+  const { rpe = 5, hrAvg = null, hrMax = null, hrTarget = null, hrTargetLow = null, paceAvg = "", paceTarget = "", completed = "yes", notes = "", workoutType = "" } = fb;
+
+  // ── 1. RPE Score (0–10 scale, higher = more fatigued) ──
+  // RPE is the primary signal — weight: 40%
+  const rpeScore = rpe;
+
+  // ── 2. HR Score (0–10 scale) ──
+  // Compare avg HR to target zone. Being above zone = more fatigue. Below = less.
+  let hrScore = 5; // neutral default
+  if (hrAvg && hrTarget) {
+    const targetMid = hrTargetLow ? (hrTargetLow + hrTarget) / 2 : hrTarget - 5;
+    const deviation = hrAvg - targetMid;
+    const zoneWidth = hrTargetLow ? (hrTarget - hrTargetLow) : 10;
+
+    if (deviation > zoneWidth) {
+      // Way above target zone — high cardiac stress
+      hrScore = Math.min(10, 7 + (deviation - zoneWidth) / 5);
+    } else if (deviation > 0) {
+      // Above midpoint but within zone — moderate
+      hrScore = 5 + (deviation / zoneWidth) * 2;
+    } else if (deviation > -zoneWidth) {
+      // Below midpoint but near zone — good control
+      hrScore = 3 + (1 + deviation / zoneWidth) * 2;
+    } else {
+      // Well below zone — either easy effort or strong fitness
+      hrScore = Math.max(1, 3 + deviation / 10);
+    }
+
+    // Max HR spike penalty: if max HR exceeds target ceiling by >10bpm, add fatigue
+    if (hrMax && hrMax > hrTarget + 10) {
+      hrScore = Math.min(10, hrScore + (hrMax - hrTarget - 10) / 8);
+    }
+  }
+
+  // ── 3. Pace Score (0–10 scale) ──
+  // Faster than target = better performance. Slower = higher fatigue signal.
+  let paceScore = 5; // neutral default
+  const actualPace = paceToSeconds(paceAvg);
+  const targetPace = parsePaceRange(paceTarget);
+  if (actualPace && targetPace.mid) {
+    const diff = actualPace - targetPace.mid; // positive = slower than target
+    const range = targetPace.high && targetPace.low ? (targetPace.high - targetPace.low) : 30;
+
+    if (diff > range) {
+      // Much slower than target — struggling
+      paceScore = Math.min(10, 7 + (diff - range) / 20);
+    } else if (diff > 0) {
+      // Slightly slower — moderate fatigue
+      paceScore = 5 + (diff / range) * 2;
+    } else if (diff > -range) {
+      // Faster than target — strong performance
+      paceScore = 3 + (1 + diff / range) * 2;
+    } else {
+      // Much faster — exceptional
+      paceScore = Math.max(1, 2 + diff / 30);
+    }
+  }
+
+  // ── 4. Completion Score ──
+  let completionScore = 5;
+  if (completed === "yes") completionScore = 3;
+  if (completed === "partial") completionScore = 7;
+  if (completed === "no") completionScore = 9;
+
+  // ── 5. Sentiment Score from notes ──
+  let sentimentScore = 5;
+  const lowerNotes = notes.toLowerCase();
+  const fatigueWords = ["exhausted", "sore", "struggled", "dying", "heavy", "tired", "sluggish", "flat", "cramping", "painful", "awful", "terrible", "bonked"];
+  const freshWords = ["strong", "easy", "felt great", "crushed", "solid", "good", "fresh", "fast", "smooth", "effortless", "controlled", "nailed"];
+  let fatigueHits = 0, freshHits = 0;
+  fatigueWords.forEach(k => { if (lowerNotes.includes(k)) fatigueHits++; });
+  freshWords.forEach(k => { if (lowerNotes.includes(k)) freshHits++; });
+  sentimentScore = Math.max(1, Math.min(10, 5 + fatigueHits * 1.5 - freshHits * 1.2));
+
+  // ── Weighted composite ──
+  // Weights vary by workout type — HR matters more for cardio, RPE more for strength
+  const isCardio = ["threshold", "subthresh", "z2", "longrun", "hyrox"].includes(workoutType);
+  const hasHr = hrAvg !== null;
+  const hasPace = actualPace !== null && targetPace.mid !== null;
+
+  let wRpe = 0.40, wHr = 0.25, wPace = 0.15, wComp = 0.10, wSent = 0.10;
+  if (isCardio && hasHr) { wRpe = 0.30; wHr = 0.30; wPace = hasPace ? 0.20 : 0; wComp = 0.10; wSent = 0.10; }
+  if (!hasHr) { wRpe += wHr; wHr = 0; }
+  if (!hasPace) { wRpe += wPace; wPace = 0; }
+  // Normalize weights
+  const wTotal = wRpe + wHr + wPace + wComp + wSent;
+  wRpe /= wTotal; wHr /= wTotal; wPace /= wTotal; wComp /= wTotal; wSent /= wTotal;
+
+  const compositeStress = rpeScore * wRpe + hrScore * wHr + paceScore * wPace + completionScore * wComp + sentimentScore * wSent;
+
+  // Fatigue: directly from composite (higher stress = higher fatigue)
+  const fatigue = Math.max(1, Math.min(10, Math.round(compositeStress * 10) / 10));
+
+  // Performance: inverse relationship but offset —
+  // Low stress + completed = high performance (adapted well)
+  // High stress + completed = moderate performance (pushed hard, may need recovery)
+  // High stress + incomplete = low performance
+  let performance = Math.max(1, Math.min(10, Math.round((11 - compositeStress) * 10) / 10));
+  // Bonus: if you completed the workout with low RPE and good HR control, you're adapting well
+  if (completed === "yes" && rpe <= 5 && hrScore <= 5) performance = Math.min(10, performance + 1);
+  // Bonus: faster than target pace while keeping HR in zone = strong performance
+  if (hasPace && paceScore < 4 && hasHr && hrScore < 6) performance = Math.min(10, performance + 0.8);
+
+  const breakdown = {
+    rpeScore: Math.round(rpeScore * 10) / 10,
+    hrScore: Math.round(hrScore * 10) / 10,
+    paceScore: Math.round(paceScore * 10) / 10,
+    completionScore: Math.round(completionScore * 10) / 10,
+    sentimentScore: Math.round(sentimentScore * 10) / 10,
+  };
+
+  return { fatigue: Math.round(fatigue * 10) / 10, performance: Math.round(performance * 10) / 10, breakdown };
+}
+
+// ─── SYSTEM PROMPT (built dynamically based on athlete level) ────────────────
+function buildSystemPrompt(level: AthleteLevel, hrZones: HRZones): string {
+  const lp = LEVEL_PROFILES[level];
+  return `You are an elite Hyrox and endurance coach. You have deep expertise in lactate threshold training, polarized training models, and Hyrox race strategy.
 
 ATHLETE PROFILE:
-- Hyrox target: Sub 1:25 finish
-- Threshold HR: 168 bpm
-- Z2 range: 135–148 bpm
-- Current running paces: threshold ~7:20–7:30/mi, sub-threshold ~7:45–8:15/mi, Z2 9:00–10:00/mi
-- SkiErg 1km benchmark: 4:20–4:30
-- Row 1km benchmark: 4:10–4:30
-- Sled push/pull: highest variance station
+- Level: ${lp.label} (${lp.description})
+- Hyrox target: ${lp.targetTime}
+- Threshold HR (LT2): ${hrZones.thresholdHr} bpm (~${Math.round(hrZones.thresholdHr/hrZones.maxHr*100)}% max)
+- Estimated LT1 (aerobic threshold): ~${Math.round(hrZones.thresholdHr * 0.87)} bpm (~${Math.round(hrZones.thresholdHr * 0.87 / hrZones.maxHr * 100)}% max)
+- Z2 ceiling: ${hrZones.z2Max} bpm
+- Max HR: ${hrZones.maxHr} bpm
+- Running paces: threshold ${lp.thresholdPace}, sub-threshold ${lp.subThreshPace}, Z2 ${lp.z2Pace}
+- SkiErg 1km: ${lp.skiErg1k}
+- Row 1km: ${lp.row1k}
 - Weekly structure: Mon threshold / Tue strength+stations / Wed sub-thresh or vest / Thu Z2 / Fri Hyrox sim / Sat heavy lift / Sun long run
-- Training program: configurable (default 8 weeks). Deloads auto-placed at midpoint and penultimate week. Final week is race week.
-- Also training for sub-3:40 marathon and Hyrox dual-discipline
-- 12-handicap golfer (plays Mon/Tue/Thu/Fri off-season)
+
+TRAINING SCIENCE CONTEXT:
+- Follow polarized 80/20 model: 80% below LT1, 20% above LT2, minimal Z3 (the "gray zone")
+- Threshold sessions: progress from 3×8min → 2×12min → 20min continuous within 4-week blocks
+- Target 25–30 min total at threshold pace per session, 10–15% of weekly running volume at LT1–LT2
+- Signs of overreaching: resting HR elevated 5+ bpm for multiple days, can't hit target intensities, HRV suppressed >1 week
+- Taper protocol: 7–14 days. Volume -25-30% week -2, volume -40-50% race week. Maintain intensity. Last hard session 3–5 days pre-race.
+- Running = ~${lp.runPctOfRace}% of total race time. Even pacing (<10% split variance) yields 5–10% faster finishes.
+- Budget race running pace 10–15% slower than standalone 10K pace to account for station fatigue.
+- Train with weights heavier than race day so competition weights feel manageable.
+
+HYROX STATION PRIORITIES:
+- Sled push/pull: highest variance station — focus training here
+- Wall balls: rhythm > speed. Steady breathing beats fast-then-stop
+- SkiErg: don't sprint first 300m. Steady pulls.
+- Sandbag lunges: keep bag high on upper back, elbows up to open lungs
+- Transitions: target 10–20 sec each (16 total = potential 4-min savings)
 
 WORKOUT ADJUSTMENT CAPABILITIES:
 When asked to adjust a specific workout, respond with a JSON block EXACTLY in this format (plus any explanation after):
@@ -257,6 +458,7 @@ When asked to adjust overall progression (e.g. make the whole plan easier/harder
 Be direct, data-driven, and specific. Use bpm numbers, pace targets, and rep counts.
 Keep explanations concise (3–5 sentences max unless asked for more).
 Always explain the physiological reason for any adjustment.`;
+}
 
 // ─── PARSE AI RESPONSE ───────────────────────────────────────────────────────
 function parseAIResponse(text: string): ParsedResponse {
@@ -326,10 +528,11 @@ interface AppSettings {
   programWeeks: number;
   hrZones: HRZones;
   themeMode: "dark" | "light";
+  athleteLevel: AthleteLevel;
 }
 
 function loadSettings(): AppSettings {
-  if (typeof window === "undefined") return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark" };
+  if (typeof window === "undefined") return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark", athleteLevel: "advanced" };
   try {
     const raw = localStorage.getItem("hyrox-settings");
     if (raw) {
@@ -339,14 +542,15 @@ function loadSettings(): AppSettings {
         programWeeks: parsed.programWeeks || DEFAULT_PROGRAM_WEEKS,
         hrZones: parsed.hrZones ? { ...DEFAULT_HR_ZONES, ...parsed.hrZones } : DEFAULT_HR_ZONES,
         themeMode: parsed.themeMode || "dark",
+        athleteLevel: parsed.athleteLevel || "advanced",
       };
     }
   } catch { /* ignore */ }
-  return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark" };
+  return { startDate: DEFAULT_START_DATE, programWeeks: DEFAULT_PROGRAM_WEEKS, hrZones: DEFAULT_HR_ZONES, themeMode: "dark", athleteLevel: "advanced" };
 }
 
-function saveSettings(startDate: Date, programWeeks: number, hrZones: HRZones, themeMode: "dark" | "light" = "dark") {
-  localStorage.setItem("hyrox-settings", JSON.stringify({ startDate: startDate.toISOString(), programWeeks, hrZones, themeMode }));
+function saveSettings(startDate: Date, programWeeks: number, hrZones: HRZones, themeMode: "dark" | "light" = "dark", athleteLevel: AthleteLevel = "advanced") {
+  localStorage.setItem("hyrox-settings", JSON.stringify({ startDate: startDate.toISOString(), programWeeks, hrZones, themeMode, athleteLevel }));
 }
 
 export default function HyroxCalendar() {
@@ -359,13 +563,46 @@ export default function HyroxCalendar() {
   const [progressionOverrides, setProgressionOverrides] = useState<Record<number, { fatigueOverride?: number; performanceOverride?: number }>>({});
   const [feedbackModal, setFeedbackModal] = useState<string | null>(null);
   const [feedbackForm, setFeedbackForm] = useState({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
+  const [manualLogModal, setManualLogModal] = useState<string | null>(null);
+  const ACTIVITY_PRESETS: { label: string; icon: string; color: string; category: string; defaultMetrics: { label: string; placeholder: string; unit?: string }[]; defaultDurations: string[] }[] = [
+    // Cardio
+    { label: "Run", icon: "🏃", color: "#FF6B35", category: "cardio", defaultMetrics: [{ label: "Distance", placeholder: "3.1", unit: "mi" }, { label: "Avg Pace", placeholder: "8:30", unit: "/mi" }, { label: "Avg HR", placeholder: "155", unit: "bpm" }], defaultDurations: ["20 min","30 min","45 min","60 min"] },
+    { label: "Walk", icon: "🚶", color: "#34D399", category: "cardio", defaultMetrics: [{ label: "Distance", placeholder: "2.0", unit: "mi" }, { label: "Avg HR", placeholder: "110", unit: "bpm" }], defaultDurations: ["20 min","30 min","45 min","60 min"] },
+    { label: "Bike", icon: "🚴", color: "#60A5FA", category: "cardio", defaultMetrics: [{ label: "Distance", placeholder: "12", unit: "mi" }, { label: "Avg HR", placeholder: "140", unit: "bpm" }, { label: "Avg Power", placeholder: "180", unit: "W" }], defaultDurations: ["20 min","30 min","45 min","60 min","90 min"] },
+    { label: "Swim", icon: "🏊", color: "#818CF8", category: "cardio", defaultMetrics: [{ label: "Distance", placeholder: "1500", unit: "m" }, { label: "Avg Pace", placeholder: "1:45", unit: "/100m" }, { label: "Avg HR", placeholder: "145", unit: "bpm" }], defaultDurations: ["20 min","30 min","45 min","60 min"] },
+    // Machines
+    { label: "Bike Erg", icon: "🚲", color: "#F97316", category: "machine", defaultMetrics: [{ label: "Avg HR", placeholder: "145", unit: "bpm" }, { label: "Avg Power", placeholder: "170", unit: "W" }, { label: "Cals", placeholder: "350", unit: "cal" }], defaultDurations: ["15 min","20 min","30 min","45 min"] },
+    { label: "Row Erg", icon: "🚣", color: "#F97316", category: "machine", defaultMetrics: [{ label: "Avg HR", placeholder: "155", unit: "bpm" }, { label: "Avg Power", placeholder: "190", unit: "W" }, { label: "Avg Pace", placeholder: "1:55", unit: "/500m" }], defaultDurations: ["15 min","20 min","30 min","45 min"] },
+    { label: "Ski Erg", icon: "⛷️", color: "#F97316", category: "machine", defaultMetrics: [{ label: "Avg HR", placeholder: "150", unit: "bpm" }, { label: "Avg Power", placeholder: "160", unit: "W" }, { label: "Avg Pace", placeholder: "2:05", unit: "/500m" }], defaultDurations: ["10 min","15 min","20 min","30 min"] },
+    // Recovery
+    { label: "Sauna", icon: "🧖", color: "#EF4444", category: "recovery", defaultMetrics: [{ label: "Temperature", placeholder: "185", unit: "°F" }, { label: "Humidity", placeholder: "60", unit: "%" }], defaultDurations: ["10 min","15 min","20 min","30 min"] },
+    { label: "Cold Plunge", icon: "🧊", color: "#22D3EE", category: "recovery", defaultMetrics: [{ label: "Temperature", placeholder: "45", unit: "°F" }, { label: "Rounds", placeholder: "3", unit: "" }], defaultDurations: ["2 min","3 min","5 min","10 min"] },
+    { label: "Stretching", icon: "🤸", color: "#A78BFA", category: "recovery", defaultMetrics: [{ label: "Focus Area", placeholder: "hips, hamstrings", unit: "" }], defaultDurations: ["10 min","15 min","20 min","30 min"] },
+    { label: "Massage", icon: "💆", color: "#A78BFA", category: "recovery", defaultMetrics: [{ label: "Type", placeholder: "deep tissue, sports", unit: "" }], defaultDurations: ["30 min","45 min","60 min","90 min"] },
+    // Other
+    { label: "Yoga", icon: "🧘", color: "#C084FC", category: "other", defaultMetrics: [{ label: "Type", placeholder: "flow, yin, hot", unit: "" }], defaultDurations: ["20 min","30 min","45 min","60 min","90 min"] },
+    { label: "Strength", icon: "🏋️", color: "#FFE66D", category: "other", defaultMetrics: [{ label: "Focus", placeholder: "upper, lower, full", unit: "" }, { label: "Avg HR", placeholder: "130", unit: "bpm" }], defaultDurations: ["30 min","45 min","60 min"] },
+    { label: "HIIT", icon: "⚡", color: "#F87171", category: "other", defaultMetrics: [{ label: "Rounds", placeholder: "8", unit: "" }, { label: "Avg HR", placeholder: "165", unit: "bpm" }, { label: "Max HR", placeholder: "185", unit: "bpm" }], defaultDurations: ["15 min","20 min","30 min"] },
+    { label: "Other", icon: "💪", color: "#9CA3AF", category: "other", defaultMetrics: [], defaultDurations: ["15 min","20 min","30 min","45 min","60 min"] },
+  ];
+  const ACTIVITY_CATEGORIES = [
+    { key: "cardio", label: "CARDIO", color: "#FF6B35" },
+    { key: "machine", label: "MACHINES", color: "#F97316" },
+    { key: "recovery", label: "RECOVERY", color: "#22D3EE" },
+    { key: "other", label: "OTHER", color: "#9CA3AF" },
+  ];
+  const [manualForm, setManualForm] = useState<{ activity: string; customName: string; duration: string; metrics: { label: string; value: string; unit?: string }[]; notes: string; rpe: number }>({
+    activity: "", customName: "", duration: "", metrics: [], notes: "", rpe: 5,
+  });
   // Settings state
   const [startDate, setStartDate] = useState<Date>(DEFAULT_START_DATE);
   const [programWeeks, setProgramWeeks] = useState(DEFAULT_PROGRAM_WEEKS);
   const [hrZones, setHrZones] = useState<HRZones>(DEFAULT_HR_ZONES);
   const [themeMode, setThemeMode] = useState<"dark"|"light">("dark");
+  const [athleteLevel, setAthleteLevel] = useState<AthleteLevel>("advanced");
   const t = themeMode === "dark" ? DARK_THEME : LIGHT_THEME;
   const isDark = themeMode === "dark";
+  const levelProfile = LEVEL_PROFILES[athleteLevel];
   // Chat state
   const [chatMode, setChatMode] = useState("day"); // "day" | "plan"
   const [dayMessages, setDayMessages] = useState<Record<string, ChatMessage[]>>({});
@@ -385,8 +622,13 @@ export default function HyroxCalendar() {
     setProgramWeeks(s.programWeeks);
     setHrZones(s.hrZones);
     setThemeMode(s.themeMode);
+    setAthleteLevel(s.athleteLevel);
     setCurrentMonth(s.startDate.getMonth());
     setCurrentYear(s.startDate.getFullYear());
+    // Register service worker for PWA
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
     // Load persisted data
     try {
       const log = localStorage.getItem("hyrox-workout-log");
@@ -412,15 +654,19 @@ export default function HyroxCalendar() {
   // Keyboard shortcuts: D/W/M for calendar modes
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Don't fire when typing in inputs
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      // Don't fire when typing in inputs, textareas, selects, or contentEditable
+      const el = e.target as HTMLElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return;
+      if (el.isContentEditable) return;
+      // Don't fire when a workout day view or chat panel is active
+      if (selectedDate || view === "planchat" || showMobileChat) return;
       if (e.key === "d" || e.key === "D") { setCalendarMode("day"); setView("calendar"); setSelectedDate(null); }
       if (e.key === "w" || e.key === "W") { setCalendarMode("week"); setView("calendar"); setSelectedDate(null); }
       if (e.key === "m" || e.key === "M") { setCalendarMode("month"); setView("calendar"); setSelectedDate(null); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [selectedDate, view, showMobileChat]);
 
   const totalDays = programWeeks * 7 + 1; // +1 for opening Sunday
 
@@ -473,11 +719,53 @@ export default function HyroxCalendar() {
       paceAvg: feedbackForm.paceAvg||undefined,
     };
     const workout = getWorkoutForDate(keyToDate(dateStr));
-    const hrTarget = workout?.hr ? parseInt(workout.hr.split("–")[1])-5 : null;
-    const adj = processFeedback({...fb, hrTarget, rpe: fb.rpe, completed: fb.completed, notes: fb.notes});
+    // Parse HR target range from workout (e.g. "163–170" → low=163, high=170)
+    const hrParts = workout?.hr?.match(/(\d+)[–-](\d+)/);
+    const hrTargetLow = hrParts ? parseInt(hrParts[1]) : null;
+    const hrTarget = hrParts ? parseInt(hrParts[2]) : null;
+    const adj = processFeedback({
+      rpe: fb.rpe,
+      hrAvg: fb.hrAvg,
+      hrMax: fb.hrMax,
+      hrTarget,
+      hrTargetLow,
+      paceAvg: fb.paceAvg || "",
+      paceTarget: workout?.pace || "",
+      completed: fb.completed,
+      notes: fb.notes,
+      workoutType: workout?.type || "",
+    });
     setWorkoutLog(prev=>({...prev,[dateStr]:{...prev[dateStr],status:fb.completed,feedback:fb,adjustments:adj}}));
     setFeedbackModal(null);
     setFeedbackForm({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
+  }
+
+  function submitManualLog(dateStr: string) {
+    const actName = manualForm.activity === "Other" && manualForm.customName ? manualForm.customName : manualForm.activity;
+    if (!actName || !manualForm.duration) return;
+    const entry: ManualActivity = {
+      activity: actName,
+      duration: manualForm.duration,
+      metrics: manualForm.metrics.filter(m => m.value.trim()).map(m => ({ label: m.unit ? `${m.label} (${m.unit})` : m.label, value: m.value + (m.unit && m.value ? ` ${m.unit}` : "") })),
+      notes: manualForm.notes,
+      timestamp: Date.now(),
+    };
+    setWorkoutLog(prev => {
+      const existing = prev[dateStr] || {};
+      const existingManual = existing.manualActivities || [];
+      return { ...prev, [dateStr]: { ...existing, status: existing.status || "yes", manualActivities: [...existingManual, entry] } };
+    });
+    setManualLogModal(null);
+    setManualForm({ activity: "", customName: "", duration: "", metrics: [], notes: "", rpe: 5 });
+  }
+
+  function removeManualActivity(dateStr: string, idx: number) {
+    setWorkoutLog(prev => {
+      const existing = prev[dateStr];
+      if (!existing?.manualActivities) return prev;
+      const updated = existing.manualActivities.filter((_, i) => i !== idx);
+      return { ...prev, [dateStr]: { ...existing, manualActivities: updated.length ? updated : undefined } };
+    });
   }
 
   // ── AI CHAT (via server-side proxy) ───────────────────────────────────────
@@ -494,6 +782,7 @@ export default function HyroxCalendar() {
     if (mode==="day" && workout) {
       contextBlock = `\n\nCURRENT WORKOUT CONTEXT:\nDate: ${dateStr}\nWeek: ${workout.weekNum}\nWorkout: ${workout.title}\nSets: ${workout.sets}\nPace: ${workout.pace}\nRest: ${workout.rest}\nHR target: ${workout.hr} bpm\nNotes: ${workout.notes}`;
       if (log?.feedback) contextBlock += `\n\nFEEDBACK LOGGED:\nRPE: ${log.feedback.rpe}/10\nStatus: ${log.feedback.completed}\nNotes: ${log.feedback.notes || "none"}\nAdjusted fatigue: ${log.adjustments?.fatigue}/10\nAdjusted performance: ${log.adjustments?.performance}/10`;
+      if (log?.manualActivities?.length) contextBlock += `\n\nADDITIONAL ACTIVITIES LOGGED:\n${log.manualActivities.map(a=>`- ${a.activity} (${a.duration})${a.metrics.length?": "+a.metrics.map(m=>`${m.label}=${m.value}`).join(", "):""}${a.notes?" — "+a.notes:""}`).join("\n")}`;
       if (workout.isOverridden) contextBlock += "\n\n(This workout has been manually overridden by a previous AI adjustment)";
     } else if (mode==="plan") {
       const overrideSummary = Object.keys(progressionOverrides).length > 0
@@ -522,7 +811,7 @@ export default function HyroxCalendar() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          system: SYSTEM_PROMPT,
+          system: buildSystemPrompt(athleteLevel, hrZones),
           messages: [...history, newUserMsg],
         }),
       });
@@ -568,19 +857,148 @@ export default function HyroxCalendar() {
     const messages = mode==="day" ? (dayMessages[dateStr!]||[]) : planMessages;
     const hasOverride = dateStr && workoutOverrides[dateStr];
 
-    const quickPrompts = mode==="day" ? [
-      "Make this workout easier — I'm feeling fatigued",
+    // Context-aware quick prompts based on workout type, logged status, and athlete level
+    const currentWorkout = dateStr ? getWorkoutForDate(keyToDate(dateStr)) : null;
+    const workoutType = currentWorkout?.type || "";
+    const weekNum = currentWorkout?.weekNum || 0;
+    const dayLog = dateStr ? workoutLog[dateStr] : null;
+    const isLogged = !!dayLog?.feedback;
+    const hasManualActivities = !!(dayLog?.manualActivities?.length);
+
+    // ── POST-WORKOUT prompts (when feedback is logged) ──
+    const postWorkoutBase: string[] = [];
+    if (isLogged && dayLog?.adjustments) {
+      const { fatigue, performance, breakdown } = dayLog.adjustments;
+      // Recovery-focused prompts based on fatigue level
+      if (fatigue >= 7) {
+        postWorkoutBase.push(
+          "That was a tough session — what should I do for recovery tonight?",
+          "Should I scale back tomorrow's workout given this fatigue?",
+          "Am I at risk of overreaching? Review my recent sessions",
+        );
+      } else if (fatigue >= 5) {
+        postWorkoutBase.push(
+          "Good session — any recovery recommendations?",
+          "Should tomorrow's workout stay as planned or adjust?",
+        );
+      } else {
+        postWorkoutBase.push(
+          "That felt easy — should I push harder next time?",
+          "Am I training hard enough? Review my intensity this week",
+        );
+      }
+
+      // HR-specific prompts
+      if (breakdown?.hrScore >= 7) {
+        postWorkoutBase.push("My HR was high — is my threshold shifting or am I fatigued?");
+      } else if (breakdown?.hrScore <= 3 && dayLog.feedback?.hrAvg) {
+        postWorkoutBase.push("My HR was well below target — should I increase pace next time?");
+      }
+
+      // Pace-specific prompts
+      if (breakdown?.paceScore >= 7) {
+        postWorkoutBase.push("I was slower than target — is this fatigue or do I need to adjust expectations?");
+      } else if (breakdown?.paceScore <= 3 && dayLog.feedback?.paceAvg) {
+        postWorkoutBase.push("I beat target pace — time to update my threshold zones?");
+      }
+
+      // Performance-specific
+      if (performance >= 8) {
+        postWorkoutBase.push("Strong performance — should I progress the plan faster?");
+      }
+    }
+
+    // Always available post-workout
+    if (isLogged) {
+      postWorkoutBase.push(
+        "Review my progress this week — am I on track for race day?",
+        "Compare this session to my targets — where am I improving?",
+        "What should I eat and do in the next 2 hours for optimal recovery?",
+        "How does this workout fit in the bigger picture of my training block?",
+      );
+    }
+
+    // Manual activity-specific prompts
+    if (hasManualActivities) {
+      const activities = dayLog!.manualActivities!;
+      const hasSauna = activities.some(a => a.activity.toLowerCase().includes("sauna"));
+      const hasCold = activities.some(a => a.activity.toLowerCase().includes("cold") || a.activity.toLowerCase().includes("plunge"));
+      const hasCross = activities.some(a => ["Bike Erg","Row Erg","Ski Erg","Swim","Walk"].includes(a.activity));
+      if (hasSauna) postWorkoutBase.push("Does sauna help or hurt recovery before tomorrow's session?");
+      if (hasCold) postWorkoutBase.push("Should I do cold plunge before or after my training session?");
+      if (hasCross) postWorkoutBase.push("Is this cross-training adding too much volume to my plan?");
+      if (hasSauna && hasCold) postWorkoutBase.push("What's the ideal contrast therapy protocol (sauna + cold)?");
+    }
+
+    // ── PRE-WORKOUT prompts ──
+    const dayPromptsBase = [
+      "Make this easier — I'm feeling fatigued",
       "Push the intensity — I'm feeling strong",
       "I only have 30 minutes — condense this",
-      "Swap this for a vest stair stepper session",
-      "What should I focus on for this workout?",
-    ] : [
-      "I'm running behind — compress weeks 5–6 intensity",
-      "Add an extra deload — I'm feeling overtrained",
-      "I want to peak harder before race week",
-      "Make the Hyrox sims more progressive",
-      "I have a race in 6 weeks not 8 — adjust",
     ];
+
+    // Add workout-type-specific prompts
+    const typePrompts: Record<string, string[]> = {
+      threshold: [
+        "Progress this to longer threshold intervals (3×8→2×12→20min continuous)",
+        "My HR is drifting above LT2 — should I back off or push through?",
+        "Convert to Norwegian double-threshold format",
+      ],
+      subthresh: [
+        "Am I in the gray zone? Should this be easier Z2 or harder threshold?",
+        "Add over/under intervals alternating above and below LT1",
+        "My resting HR is up 5+ bpm this week — is this overreaching?",
+      ],
+      z2: [
+        "Can I add 3–4 short strides (15–20 sec) to keep neuromuscular priming?",
+        "Should I keep this strictly nasal breathing or allow some mouth breathing?",
+        "Convert to a brick workout — add stations after the run",
+      ],
+      hyrox: [
+        "Help me plan even pacing — what split should I target per 1km run?",
+        "Focus this sim on my weakest stations (sled push/pull)",
+        "Add compromised running practice — run immediately after each station",
+        "How should I pace transitions? Target seconds per transition?",
+      ],
+      strength: [
+        "Should I train heavier than race weights to make competition feel easier?",
+        "Swap to strength endurance (12+ reps) — I'm in competition phase",
+        "Add sled push/pull practice with heavier than race weight",
+      ],
+      longrun: [
+        "Add a negative split — run last 30% at sub-threshold pace",
+        "Should I add Hyrox stations mid-run to practice compromised running?",
+        "What HR drift is acceptable over this duration?",
+      ],
+      vest: [
+        "Progress the vest weight — what increment is safe?",
+        "Convert to stair intervals instead of steady state",
+      ],
+    };
+
+    // Choose prompts based on whether workout is logged
+    const dayPrompts = mode==="day" ? (
+      isLogged
+        ? postWorkoutBase.slice(0, 6)
+        : [
+            ...dayPromptsBase,
+            ...(typePrompts[workoutType] || ["What should I focus on for this workout?"]),
+            ...(weekNum >= (programWeeks - 1) ? ["I'm in taper — is this too much volume?"] : []),
+          ].slice(0, 6)
+    ) : [];
+
+    const planPrompts = [
+      "Am I doing too much Zone 3? Switch me to polarized 80/20",
+      "My resting HR is elevated — am I overreaching? Adjust the plan",
+      "Add an extra deload week — I'm accumulating fatigue",
+      "Progress my threshold sessions: 3×8min → 2×12min → 20min continuous",
+      "I want to peak harder — build a 2-week race taper",
+      "Make the Hyrox sims more progressive with more stations each week",
+      "How should I distribute volume? What % at each intensity zone?",
+      "Retest my threshold zones — I think my fitness has improved",
+    ];
+
+    const quickPrompts = mode==="day" ? dayPrompts : planPrompts;
 
     return (
       <div style={{display:"flex",flexDirection:"column",height:"100%",background:t.chatBg}}>
@@ -613,9 +1031,9 @@ export default function HyroxCalendar() {
         <div style={{flex:1,overflowY:"auto",padding:"14px 16px",display:"flex",flexDirection:"column",gap:10}}>
           {messages.length===0 && (
             <div style={{textAlign:"center",padding:"20px 10px"}}>
-              <div style={{fontSize:24,marginBottom:10}}>{chatMode==="day"?"🎯":"📋"}</div>
+              <div style={{fontSize:24,marginBottom:10}}>{chatMode==="day"?(isLogged?"📊":"🎯"):"📋"}</div>
               <div style={{fontFamily:"Barlow Condensed",fontSize:14,letterSpacing:"0.1em",color:t.textFaint,marginBottom:14}}>
-                {chatMode==="day"?"ASK ABOUT THIS WORKOUT":"ASK ABOUT YOUR PLAN"}
+                {chatMode==="day"?(isLogged?"REVIEW & RECOVER":"ASK ABOUT THIS WORKOUT"):"ASK ABOUT YOUR PLAN"}
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {quickPrompts.map((p,i)=>(
@@ -698,6 +1116,52 @@ export default function HyroxCalendar() {
     );
   }
 
+  // ── MANUAL ACTIVITIES SECTION (shared between DayView & outside-window) ──
+  function renderManualActivitiesSection(key: string, log: LogEntry | undefined) {
+    const activities = log?.manualActivities || [];
+    return (
+      <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"12px 14px":"16px 18px",marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:activities.length?12:0}}>
+          <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:t.textFaint}}>ADDITIONAL ACTIVITIES</div>
+          {activities.length>0&&<div style={{fontSize:9,color:t.textGhost}}>{activities.length} logged</div>}
+        </div>
+        {activities.map((a, i) => {
+          const preset = ACTIVITY_PRESETS.find(p => p.label === a.activity);
+          const accentColor = preset?.color || "#4ECDC4";
+          return (
+            <div key={i} style={{background:t.bgInput,borderRadius:8,padding:"12px 14px",marginBottom:8,border:`1px solid ${accentColor}22`,borderLeft:`3px solid ${accentColor}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:a.metrics.length||a.notes?8:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:20}}>{preset?.icon||"💪"}</span>
+                  <div>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:15,fontWeight:900,color:t.text,lineHeight:1}}>{a.activity}</div>
+                    <div style={{fontSize:9,color:t.textGhost,marginTop:2}}>{a.duration}</div>
+                  </div>
+                </div>
+                <button onClick={(e)=>{e.stopPropagation();removeManualActivity(key,i);}} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textGhost,cursor:"pointer",fontSize:9,padding:"3px 8px",fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}} title="Remove">✕</button>
+              </div>
+              {a.metrics.length>0&&(
+                <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:a.notes?6:0}}>
+                  {a.metrics.map((m,j)=>(
+                    <div key={j} style={{background:t.bgCard,borderRadius:4,padding:"4px 8px"}}>
+                      <span style={{fontSize:8,letterSpacing:"0.1em",color:t.textGhost}}>{m.label.replace(/\s*\([^)]*\)\s*$/,"")}: </span>
+                      <span style={{fontSize:12,color:accentColor,fontFamily:"DM Mono",fontWeight:700}}>{m.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {a.notes&&<div style={{fontSize:11,color:t.textMuted,fontStyle:"italic",marginTop:4,paddingTop:4,borderTop:`1px solid ${t.borderLight}`}}>{a.notes}</div>}
+            </div>
+          );
+        })}
+        <button onClick={()=>{setManualLogModal(key);setManualForm({activity:"",customName:"",duration:"",metrics:[],notes:"",rpe:5});}}
+          style={{background:t.bgInput,border:`1px dashed ${t.borderFocus}`,borderRadius:6,color:t.textFaint,cursor:"pointer",padding:"10px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <span style={{fontSize:14}}>+</span> LOG ACTIVITY
+        </button>
+      </div>
+    );
+  }
+
   // ── DAY VIEW ──────────────────────────────────────────────────────────────
   function DayView({ date }: { date: Date }) {
     const workout = getWorkoutForDate(date);
@@ -709,11 +1173,15 @@ export default function HyroxCalendar() {
     const isPast = date<today;
 
     if (!workout || !meta) return (
-      <div style={{padding:60,textAlign:"center",color:t.textFaint}}>
+      <div style={{padding:40,textAlign:"center",color:t.textFaint}}>
         <div style={{fontSize:40,marginBottom:12}}>📅</div>
         <div style={{fontFamily:"Barlow Condensed",fontSize:18,letterSpacing:"0.1em"}}>Outside training window</div>
         <div style={{fontSize:13,marginTop:6,color:t.textFaint}}>Program: {startDate.toLocaleDateString("en-US",{month:"short",day:"numeric"})} – {new Date(startDate.getTime()+(programWeeks*7)*86400000).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
         <button onClick={()=>setSelectedDate(null)} style={{marginTop:20,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"8px 18px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← BACK TO CALENDAR</button>
+        {/* Manual activities even outside training window */}
+        <div style={{marginTop:24,maxWidth:440,marginLeft:"auto",marginRight:"auto",textAlign:"left"}}>
+          {renderManualActivitiesSection(key, log)}
+        </div>
       </div>
     );
 
@@ -771,9 +1239,38 @@ export default function HyroxCalendar() {
                     {log.feedback.hrMax&&<div><span style={{color:t.textFaint}}>Max HR: </span>{log.feedback.hrMax} bpm</div>}
                     {log.feedback.paceAvg&&<div><span style={{color:t.textFaint}}>Avg Pace: </span>{log.feedback.paceAvg}/mi</div>}
                     {log.feedback.notes&&<div><span style={{color:t.textFaint}}>Notes: </span>{log.feedback.notes}</div>}
-                    <div style={{marginTop:8,padding:"7px 10px",background:t.bgInput,borderRadius:4,fontSize:9,display:"flex",gap:16,flexWrap:"wrap"}}>
-                      <span style={{color:"#FF6B35"}}>Fatigue {log.adjustments?.fatigue}/10</span>
-                      <span style={{color:"#4ECDC4"}}>Perf {log.adjustments?.performance}/10</span>
+                    {/* Composite scores */}
+                    <div style={{marginTop:10,padding:"10px 12px",background:t.bgInput,borderRadius:6,border:`1px solid ${t.borderLight}`}}>
+                      <div style={{display:"flex",gap:16,marginBottom:8}}>
+                        <div>
+                          <div style={{fontSize:8,letterSpacing:"0.15em",color:t.textGhost,marginBottom:2}}>FATIGUE</div>
+                          <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,color:log.adjustments!.fatigue>=7?"#F87171":log.adjustments!.fatigue>=5?"#FFE66D":"#34D399"}}>{log.adjustments?.fatigue}</div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:8,letterSpacing:"0.15em",color:t.textGhost,marginBottom:2}}>PERFORMANCE</div>
+                          <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,color:log.adjustments!.performance>=7?"#34D399":log.adjustments!.performance>=5?"#FFE66D":"#F87171"}}>{log.adjustments?.performance}</div>
+                        </div>
+                      </div>
+                      {/* Breakdown bars */}
+                      {log.adjustments?.breakdown && (
+                        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                          {([
+                            ["RPE", log.adjustments.breakdown.rpeScore, "#FF6B35"],
+                            ["HR", log.adjustments.breakdown.hrScore, "#F97316"],
+                            ["PACE", log.adjustments.breakdown.paceScore, "#4ECDC4"],
+                            ["COMPLETION", log.adjustments.breakdown.completionScore, "#60A5FA"],
+                            ["SENTIMENT", log.adjustments.breakdown.sentimentScore, "#C084FC"],
+                          ] as [string, number, string][]).map(([label, score, color]) => (
+                            <div key={label} style={{display:"flex",alignItems:"center",gap:6}}>
+                              <div style={{fontSize:8,letterSpacing:"0.1em",color:t.textGhost,width:70,flexShrink:0}}>{label}</div>
+                              <div style={{flex:1,height:4,background:t.border,borderRadius:2,overflow:"hidden"}}>
+                                <div style={{width:`${score*10}%`,height:"100%",background:color,borderRadius:2,transition:"width 0.3s ease"}} />
+                              </div>
+                              <div style={{fontSize:9,color:t.textFaint,width:22,textAlign:"right"}}>{score}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button onClick={()=>setFeedbackModal(key)} style={{marginTop:10,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"5px 10px",fontSize:9,fontFamily:"DM Mono",letterSpacing:"0.1em",width:"100%"}}>UPDATE</button>
@@ -783,6 +1280,9 @@ export default function HyroxCalendar() {
               )}
             </div>
           )}
+
+          {/* Manual Activities */}
+          {renderManualActivitiesSection(key, log)}
 
           {/* Mobile: chat toggle button */}
           {bp.isMobile && (
@@ -833,12 +1333,12 @@ export default function HyroxCalendar() {
       <div style={{borderBottom:`1px solid ${t.border}`,padding:bp.isMobile?"8px 10px":"10px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:bp.isMobile?4:8,minHeight:bp.isMobile?44:56,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:bp.isMobile?4:12,flexShrink:0}}>
           <div style={{fontFamily:"Barlow Condensed",fontSize:bp.isMobile?18:26,fontWeight:900,color:"#FF6B35",letterSpacing:"0.08em",cursor:"pointer"}} onClick={()=>{setView("calendar");setSelectedDate(null);}}>HYROX</div>
-          {!bp.isMobile && <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:t.textGhost}}>ADAPTIVE TRAINING CALENDAR</div>}
+          {!bp.isMobile && <div style={{fontFamily:"Barlow Condensed",fontSize:10,letterSpacing:"0.2em",color:t.textGhost}}>ADAPTIVE TRAINING CALENDAR · {levelProfile.label} · {levelProfile.targetTime.toUpperCase()}</div>}
         </div>
         <div style={{display:"flex",gap:bp.isMobile?3:10,alignItems:"center",flexWrap:bp.isMobile?"nowrap":"wrap",overflow:bp.isMobile?"auto":"visible"}}>
           {/* Theme toggle — icon only on mobile */}
           <button
-            onClick={()=>{const next=isDark?"light":"dark";setThemeMode(next);saveSettings(startDate,programWeeks,hrZones,next);}}
+            onClick={()=>{const next=isDark?"light":"dark";setThemeMode(next);saveSettings(startDate,programWeeks,hrZones,next,athleteLevel);}}
             style={{background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:bp.isMobile?"4px 6px":"5px 12px",fontSize:bp.isMobile?12:9,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.15em",flexShrink:0}}
             title={`Switch to ${isDark?"light":"dark"} mode`}
           >
@@ -959,7 +1459,7 @@ export default function HyroxCalendar() {
               <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>APPEARANCE</div>
               <div style={{display:"flex",gap:8}}>
                 {(["dark","light"] as const).map(mode=>(
-                  <button key={mode} onClick={()=>{setThemeMode(mode);saveSettings(startDate,programWeeks,hrZones,mode);}} style={{
+                  <button key={mode} onClick={()=>{setThemeMode(mode);saveSettings(startDate,programWeeks,hrZones,mode,athleteLevel);}} style={{
                     flex:1,padding:"12px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",
                     background:themeMode===mode?(mode==="dark"?"#FF6B3522":"#FF6B3522"):t.bgInput,
                     border:`1px solid ${themeMode===mode?"#FF6B35":t.borderFocus}`,
@@ -971,6 +1471,35 @@ export default function HyroxCalendar() {
               </div>
             </div>
 
+            {/* Athlete Level */}
+            <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:6}}>ATHLETE LEVEL</div>
+              <div style={{fontSize:11,color:t.textFaint,marginBottom:14,lineHeight:1.5}}>Sets pace targets, volume scaling, and AI coaching context</div>
+              <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr 1fr":"repeat(4,1fr)",gap:8}}>
+                {(Object.entries(LEVEL_PROFILES) as [AthleteLevel, LevelProfile][]).map(([key, lp])=>(
+                  <button key={key} onClick={()=>{setAthleteLevel(key);saveSettings(startDate,programWeeks,hrZones,themeMode,key);}} style={{
+                    background:athleteLevel===key?"#FF6B3518":"transparent",
+                    border:`1px solid ${athleteLevel===key?"#FF6B35":t.borderFocus}`,
+                    borderRadius:6,cursor:"pointer",padding:"12px 10px",textAlign:"left",
+                  }}>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:900,letterSpacing:"0.1em",color:athleteLevel===key?"#FF6B35":t.textMuted,marginBottom:4}}>{lp.label}</div>
+                    <div style={{fontSize:10,color:t.textFaint,lineHeight:1.4,marginBottom:6}}>{lp.description}</div>
+                    <div style={{fontSize:9,color:athleteLevel===key?"#FF6B35":t.textGhost}}>Target: {lp.targetTime}</div>
+                  </button>
+                ))}
+              </div>
+              {/* Level details */}
+              <div style={{marginTop:14,padding:"12px 14px",background:t.bgInput,borderRadius:6,fontSize:11,color:t.textMuted,lineHeight:1.8}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:11,letterSpacing:"0.1em",color:"#FF6B35",marginBottom:6}}>CURRENT TARGETS — {levelProfile.label}</div>
+                <div><span style={{color:t.textFaint}}>Threshold pace:</span> {levelProfile.thresholdPace}</div>
+                <div><span style={{color:t.textFaint}}>Sub-threshold:</span> {levelProfile.subThreshPace}</div>
+                <div><span style={{color:t.textFaint}}>Zone 2:</span> {levelProfile.z2Pace}</div>
+                <div><span style={{color:t.textFaint}}>SkiErg 1km:</span> {levelProfile.skiErg1k}</div>
+                <div><span style={{color:t.textFaint}}>Row 1km:</span> {levelProfile.row1k}</div>
+                <div style={{marginTop:6,fontSize:10,color:t.textGhost}}>Running ≈ {levelProfile.runPctOfRace}% of total race time. Budget paces 10–15% slower than standalone 10K.</div>
+              </div>
+            </div>
+
             {/* Program config */}
             <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"16px":"20px 22px",marginBottom:16}}>
               <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:900,letterSpacing:"0.12em",color:t.text,marginBottom:16}}>PROGRAM</div>
@@ -979,13 +1508,13 @@ export default function HyroxCalendar() {
                   <div style={labelStyle}>START DATE</div>
                   <input type="date" value={inputDateStr(startDate)} onChange={e=>{
                     const d = new Date(e.target.value + "T00:00:00");
-                    if(!isNaN(d.getTime())){setStartDate(d);saveSettings(d,programWeeks,hrZones,themeMode);setCurrentMonth(d.getMonth());setCurrentYear(d.getFullYear());}
+                    if(!isNaN(d.getTime())){setStartDate(d);saveSettings(d,programWeeks,hrZones,themeMode,athleteLevel);setCurrentMonth(d.getMonth());setCurrentYear(d.getFullYear());}
                   }} style={fieldStyle} />
                 </div>
                 <div>
                   <div style={labelStyle}>PROGRAM WEEKS</div>
                   <select value={programWeeks} onChange={e=>{
-                    const w=parseInt(e.target.value);setProgramWeeks(w);saveSettings(startDate,w,hrZones,themeMode);
+                    const w=parseInt(e.target.value);setProgramWeeks(w);saveSettings(startDate,w,hrZones,themeMode,athleteLevel);
                   }} style={{...fieldStyle,cursor:"pointer"}}>
                     {[4,5,6,7,8,9,10,11,12].map(w=><option key={w} value={w}>{w} weeks</option>)}
                   </select>
@@ -1015,7 +1544,7 @@ export default function HyroxCalendar() {
                       if(!isNaN(age)&&age>10&&age<100){
                         const maxHr=220-age;
                         const zones=zonesFromMaxHr(maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1025,7 +1554,7 @@ export default function HyroxCalendar() {
                       const maxHr=parseInt(e.target.value);
                       if(!isNaN(maxHr)&&maxHr>100&&maxHr<230){
                         const zones=zonesFromMaxHr(maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1035,7 +1564,7 @@ export default function HyroxCalendar() {
                       const thr=parseInt(e.target.value);
                       if(!isNaN(thr)&&thr>100&&thr<230){
                         const zones=zonesFromThreshold(thr,hrZones.maxHr);
-                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode);
+                        setHrZones(zones);saveSettings(startDate,programWeeks,zones,themeMode,athleteLevel);
                       }
                     }} style={{...fieldStyle,padding:"8px 10px",fontSize:12}} />
                   </div>
@@ -1063,7 +1592,7 @@ export default function HyroxCalendar() {
                         if(!isNaN(val)&&val>0&&val<250){
                           const updated={...hrZones,[key]:val};
                           setHrZones(updated);
-                          saveSettings(startDate,programWeeks,updated,themeMode);
+                          saveSettings(startDate,programWeeks,updated,themeMode,athleteLevel);
                         }
                       }} style={{...fieldStyle,width:"100%"}} />
                       <span style={{fontSize:11,color:t.textFaint,flexShrink:0}}>bpm</span>
@@ -1084,7 +1613,7 @@ export default function HyroxCalendar() {
             {/* Reset */}
             <button onClick={()=>{
               setStartDate(DEFAULT_START_DATE);setProgramWeeks(DEFAULT_PROGRAM_WEEKS);setHrZones(DEFAULT_HR_ZONES);
-              saveSettings(DEFAULT_START_DATE,DEFAULT_PROGRAM_WEEKS,DEFAULT_HR_ZONES,themeMode);
+              saveSettings(DEFAULT_START_DATE,DEFAULT_PROGRAM_WEEKS,DEFAULT_HR_ZONES,themeMode,athleteLevel);
               setCurrentMonth(DEFAULT_START_DATE.getMonth());setCurrentYear(DEFAULT_START_DATE.getFullYear());
             }} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"10px 18px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>
               RESET TO DEFAULTS
@@ -1237,6 +1766,7 @@ export default function HyroxCalendar() {
                   {log?.status&&<div style={{position:"absolute",top:bp.isMobile?3:5,right:bp.isMobile?3:5,width:bp.isMobile?5:7,height:bp.isMobile?5:7,borderRadius:"50%",background:statusColor(log.status)!}}/>}
                 </>
               )}
+              {log?.manualActivities&&log.manualActivities.length>0&&<div style={{position:"absolute",bottom:bp.isMobile?2:4,right:bp.isMobile?2:4,fontSize:bp.isMobile?7:9,color:"#4ECDC4",lineHeight:1}}>+{log.manualActivities.length}</div>}
             </div>
           );
         };
@@ -1403,6 +1933,193 @@ export default function HyroxCalendar() {
               </div>
             </div>
           </div>
+        );
+      })()}
+
+      {/* Manual Activity Log Modal */}
+      {manualLogModal&&(()=>{
+        const selectedPreset = ACTIVITY_PRESETS.find(p => p.label === manualForm.activity);
+        const actName = manualForm.activity === "Other" && manualForm.customName ? manualForm.customName : manualForm.activity;
+        const canSave = !!actName && !!manualForm.duration;
+        return (
+        <div style={{position:"fixed",inset:0,background:t.overlayBg,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:bp.isMobile?10:20}} onClick={()=>setManualLogModal(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:t.modalBg,border:`1px solid ${t.borderFocus}`,borderRadius:12,width:"100%",maxWidth:520,overflow:"hidden",maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
+            {/* Header */}
+            <div style={{height:3,background:selectedPreset?.color||"#4ECDC4"}}/>
+            <div style={{padding:"16px 22px 0",flexShrink:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,letterSpacing:"0.1em",color:t.text}}>LOG ACTIVITY</div>
+                <button onClick={()=>setManualLogModal(null)} style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:18,padding:"2px 6px",lineHeight:1}}>✕</button>
+              </div>
+              <div style={{fontSize:10,color:t.textFaint,marginBottom:14}}>{keyToDate(manualLogModal).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+            </div>
+
+            {/* Scrollable body */}
+            <div style={{overflowY:"auto",padding:"0 22px 18px",flex:1}}>
+
+              {/* ── STEP 1: Activity picker as visual grid ── */}
+              {!manualForm.activity ? (
+                <div>
+                  {ACTIVITY_CATEGORIES.map(cat => {
+                    const presets = ACTIVITY_PRESETS.filter(p => p.category === cat.key);
+                    return (
+                      <div key={cat.key} style={{marginBottom:16}}>
+                        <div style={{fontSize:8,letterSpacing:"0.2em",color:cat.color,marginBottom:8,fontFamily:"Barlow Condensed",fontWeight:700}}>{cat.label}</div>
+                        <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:8}}>
+                          {presets.map(preset=>(
+                            <button
+                              key={preset.label}
+                              onClick={()=>setManualForm(f=>({
+                                ...f,
+                                activity: preset.label,
+                                customName: "",
+                                metrics: preset.defaultMetrics.map(m=>({label:m.label,value:"",unit:m.unit})),
+                                duration: "",
+                              }))}
+                              style={{
+                                background:t.bgInput,border:`1px solid ${t.borderLight}`,borderRadius:8,
+                                cursor:"pointer",padding:"14px 10px",display:"flex",flexDirection:"column",
+                                alignItems:"center",gap:6,transition:"all 0.15s",
+                              }}
+                              onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.borderColor=preset.color;(e.currentTarget as HTMLElement).style.background=preset.color+"11";}}
+                              onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.borderColor=t.borderLight;(e.currentTarget as HTMLElement).style.background=t.bgInput;}}
+                            >
+                              <span style={{fontSize:24}}>{preset.icon}</span>
+                              <span style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:700,letterSpacing:"0.08em",color:t.textMuted}}>{preset.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                /* ── STEP 2: Details form (shown after picking activity) ── */
+                <div>
+                  {/* Selected activity header */}
+                  <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18,padding:"12px 14px",background:selectedPreset?(selectedPreset.color+"11"):t.bgInput,border:`1px solid ${selectedPreset?.color||t.borderFocus}44`,borderRadius:8}}>
+                    <span style={{fontSize:28}}>{selectedPreset?.icon||"💪"}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontFamily:"Barlow Condensed",fontSize:18,fontWeight:900,color:t.text,lineHeight:1}}>
+                        {manualForm.activity==="Other" && manualForm.customName ? manualForm.customName : manualForm.activity}
+                      </div>
+                      <div style={{fontSize:9,color:t.textFaint,marginTop:2}}>{selectedPreset?.category.toUpperCase()||"CUSTOM"}</div>
+                    </div>
+                    <button onClick={()=>setManualForm(f=>({...f,activity:"",customName:"",metrics:[],duration:""}))}
+                      style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"4px 10px",fontSize:9,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>CHANGE</button>
+                  </div>
+
+                  {/* Custom name for "Other" */}
+                  {manualForm.activity==="Other"&&(
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>ACTIVITY NAME</div>
+                      <input type="text" placeholder="What did you do?" value={manualForm.customName}
+                        onChange={e=>setManualForm(f=>({...f,customName:e.target.value}))}
+                        autoFocus
+                        style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"10px 12px",fontSize:13,fontFamily:"DM Mono",outline:"none"}}/>
+                    </div>
+                  )}
+
+                  {/* Duration — quick picks + custom */}
+                  <div style={{marginBottom:16}}>
+                    <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:8}}>DURATION</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                      {(selectedPreset?.defaultDurations||["15 min","20 min","30 min","45 min","60 min"]).map(d=>(
+                        <button key={d} onClick={()=>setManualForm(f=>({...f,duration:d}))}
+                          style={{
+                            background:manualForm.duration===d?(selectedPreset?.color||"#4ECDC4")+"22":"none",
+                            border:`1px solid ${manualForm.duration===d?(selectedPreset?.color||"#4ECDC4"):t.borderFocus}`,
+                            borderRadius:6,color:manualForm.duration===d?(selectedPreset?.color||"#4ECDC4"):t.textFaint,
+                            cursor:"pointer",padding:"8px 14px",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.05em",
+                          }}>
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                    <input type="text" placeholder="Or type: 25 min, 1:30:00, etc." value={manualForm.duration}
+                      onChange={e=>setManualForm(f=>({...f,duration:e.target.value}))}
+                      style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"9px 12px",fontSize:12,fontFamily:"DM Mono",outline:"none"}}/>
+                  </div>
+
+                  {/* Effort */}
+                  <div style={{marginBottom:16}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:8}}>
+                      <span>EFFORT (RPE)</span>
+                      <span style={{color:manualForm.rpe>=8?"#F87171":manualForm.rpe>=6?"#FFE66D":"#34D399",fontSize:10,fontFamily:"DM Mono"}}>{manualForm.rpe}/10</span>
+                    </div>
+                    <input type="range" min={1} max={10} value={manualForm.rpe} onChange={e=>setManualForm(f=>({...f,rpe:parseInt(e.target.value)}))}
+                      style={{width:"100%",accentColor:selectedPreset?.color||"#4ECDC4"}}/>
+                  </div>
+
+                  {/* Metrics */}
+                  {manualForm.metrics.length>0&&(
+                    <div style={{marginBottom:16}}>
+                      <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:8}}>METRICS</div>
+                      <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr":"1fr 1fr",gap:10}}>
+                        {manualForm.metrics.map((m,i)=>(
+                          <div key={i} style={{position:"relative"}}>
+                            <div style={{fontSize:8,letterSpacing:"0.12em",color:t.textGhost,marginBottom:4}}>
+                              {m.label==="Custom"?"CUSTOM METRIC":m.label.toUpperCase()}
+                            </div>
+                            <div style={{display:"flex",gap:0}}>
+                              {m.label==="Custom"&&(
+                                <input type="text" placeholder="Name" value={m.label==="Custom"?"":m.label}
+                                  onChange={e=>{const v=e.target.value;setManualForm(f=>({...f,metrics:f.metrics.map((mm,ii)=>ii===i?{...mm,label:v||"Custom"}:mm)}));}}
+                                  style={{width:"40%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRight:"none",borderRadius:"6px 0 0 6px",color:t.textFaint,padding:"9px 10px",fontSize:11,fontFamily:"DM Mono",outline:"none"}}/>
+                              )}
+                              <div style={{flex:1,position:"relative"}}>
+                                <input type="text"
+                                  placeholder={selectedPreset?.defaultMetrics[i]?.placeholder||"Value"}
+                                  value={m.value}
+                                  onChange={e=>{const v=e.target.value;setManualForm(f=>({...f,metrics:f.metrics.map((mm,ii)=>ii===i?{...mm,value:v}:mm)}));}}
+                                  style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:m.label==="Custom"?"0 6px 6px 0":"6px",color:t.textSecondary,padding:"9px 12px",paddingRight:m.unit?40:12,fontSize:12,fontFamily:"DM Mono",outline:"none"}}/>
+                                {m.unit&&<span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:10,color:t.textGhost,pointerEvents:"none"}}>{m.unit}</span>}
+                              </div>
+                              <button onClick={()=>setManualForm(f=>({...f,metrics:f.metrics.filter((_,ii)=>ii!==i)}))}
+                                style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:12,padding:"0 6px",lineHeight:1,flexShrink:0}}>✕</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Add custom metric */}
+                  <div style={{marginBottom:16}}>
+                    <button onClick={()=>setManualForm(f=>({...f,metrics:[...f.metrics,{label:"Custom",value:"",unit:""}]}))}
+                      style={{background:"none",border:`1px dashed ${t.borderFocus}`,borderRadius:6,color:t.textGhost,cursor:"pointer",padding:"7px 14px",fontSize:10,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.1em"}}>
+                      + ADD CUSTOM METRIC
+                    </button>
+                  </div>
+
+                  {/* Notes */}
+                  <div style={{marginBottom:18}}>
+                    <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>NOTES</div>
+                    <textarea value={manualForm.notes} onChange={e=>setManualForm(f=>({...f,notes:e.target.value}))}
+                      placeholder={
+                        manualForm.activity==="Sauna"?"focused on deep breathing, 3 rounds of 10 min…":
+                        manualForm.activity==="Cold Plunge"?"alternated with sauna, felt great after…":
+                        manualForm.activity==="Run"?"easy pace, legs felt fresh, nice weather…":
+                        manualForm.activity==="Bike"?"steady Z2 ride, flat route…":
+                        "how it felt, what you focused on…"
+                      }
+                      rows={2} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"9px 12px",fontSize:11,fontFamily:"DM Mono",outline:"none",resize:"none"}}/>
+                  </div>
+
+                  {/* Save / Cancel */}
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>setManualLogModal(null)} style={{flex:1,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textFaint,cursor:"pointer",padding:"10px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>CANCEL</button>
+                    <button onClick={()=>submitManualLog(manualLogModal)}
+                      disabled={!canSave}
+                      style={{flex:2,background:canSave?(selectedPreset?.color||"#4ECDC4"):(isDark?"#333":"#ccc"),border:"none",borderRadius:6,color:isDark?"#0A0A0A":"#FFF",cursor:canSave?"pointer":"not-allowed",padding:"10px",fontSize:13,fontFamily:"Barlow Condensed",fontWeight:900,letterSpacing:"0.1em",opacity:canSave?1:0.5}}>
+                      {selectedPreset?.icon||"💪"} SAVE ACTIVITY
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
         );
       })()}
     </div>
