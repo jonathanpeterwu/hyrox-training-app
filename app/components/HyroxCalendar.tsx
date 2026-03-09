@@ -1281,6 +1281,68 @@ export default function HyroxCalendar() {
             </div>
           )}
 
+          {/* Recent Sessions — context from surrounding days */}
+          {(()=>{
+            const nearby: { date: Date; key: string; log: LogEntry; workout: ReturnType<typeof getWorkoutForDate> }[] = [];
+            for (let offset = -3; offset <= 3; offset++) {
+              if (offset === 0) continue;
+              const d = new Date(date.getTime() + offset * 86400000);
+              const dk = dateKey(d);
+              const dl = workoutLog[dk];
+              if (dl?.feedback || dl?.manualActivities?.length) {
+                nearby.push({ date: d, key: dk, log: dl, workout: getWorkoutForDate(d) });
+              }
+            }
+            if (nearby.length === 0) return null;
+            return (
+              <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"12px 14px":"16px 18px",marginBottom:14}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:t.textFaint,marginBottom:10}}>RECENT SESSIONS</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {nearby.map(n => {
+                    const nMeta = n.workout ? TYPE_META[n.workout.type] : null;
+                    const isBeforeToday = n.date < date;
+                    return (
+                      <div key={n.key} onClick={()=>{setSelectedDate(n.date);setChatMode("day");}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:t.bgInput,borderRadius:6,cursor:"pointer",border:`1px solid ${t.borderLight}`,transition:"border-color 0.15s"}}
+                        onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.borderColor=t.borderFocus;}}
+                        onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.borderColor=t.borderLight;}}>
+                        {/* Date */}
+                        <div style={{textAlign:"center",minWidth:36,flexShrink:0}}>
+                          <div style={{fontSize:7,letterSpacing:"0.1em",color:t.textGhost,lineHeight:1}}>{isBeforeToday?"←":"→"} {Math.abs(Math.round((n.date.getTime()-date.getTime())/86400000))}d</div>
+                          <div style={{fontFamily:"Barlow Condensed",fontSize:16,fontWeight:900,color:t.textMuted,lineHeight:1.1}}>{n.date.getDate()}</div>
+                          <div style={{fontSize:7,color:t.textGhost}}>{DAYS[(n.date.getDay()+6)%7]}</div>
+                        </div>
+                        {/* Color bar */}
+                        {nMeta&&<div style={{width:3,alignSelf:"stretch",borderRadius:2,background:nMeta.color,flexShrink:0}}/>}
+                        {/* Content */}
+                        <div style={{flex:1,minWidth:0}}>
+                          {n.workout&&nMeta?(
+                            <div style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:700,color:t.text,lineHeight:1.1,marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{nMeta.icon} {n.workout.title}</div>
+                          ):(
+                            <div style={{fontSize:11,color:t.textGhost,fontStyle:"italic",marginBottom:3}}>Rest day</div>
+                          )}
+                          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                            {n.log.feedback&&(
+                              <>
+                                <span style={{fontSize:9,color:n.log.feedback.rpe>=8?"#F87171":n.log.feedback.rpe>=6?"#FFE66D":"#34D399",fontFamily:"DM Mono"}}>RPE {n.log.feedback.rpe}</span>
+                                {n.log.feedback.hrAvg&&<span style={{fontSize:9,color:t.textFaint,fontFamily:"DM Mono"}}>{n.log.feedback.hrAvg}bpm</span>}
+                                {n.log.adjustments&&<span style={{fontSize:9,color:n.log.adjustments.fatigue>=7?"#F87171":n.log.adjustments.fatigue>=5?"#FFE66D":"#34D399",fontFamily:"DM Mono"}}>F:{n.log.adjustments.fatigue}</span>}
+                              </>
+                            )}
+                            {n.log.manualActivities?.map((a,ai)=>(
+                              <span key={ai} style={{fontSize:8,color:"#4ECDC4"}}>{ACTIVITY_PRESETS.find(p=>p.label===a.activity)?.icon||"💪"} {a.activity}</span>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Status */}
+                        {n.log.status&&<div style={{width:8,height:8,borderRadius:"50%",background:statusColor(n.log.status)||t.textGhost,flexShrink:0}}/>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Manual Activities */}
           {renderManualActivitiesSection(key, log)}
 
@@ -1689,17 +1751,46 @@ export default function HyroxCalendar() {
                           {log?.status&&<div style={{marginLeft:"auto",background:statusColor(log.status)+"22",border:`1px solid ${statusColor(log.status)}`,borderRadius:3,padding:"1px 6px",fontSize:8,color:statusColor(log.status)!}}>{log.status==="yes"?"✓":log.status==="partial"?"½":"✗"}</div>}
                         </div>
                         <div style={{fontFamily:"Barlow Condensed",fontSize:15,fontWeight:900,color:t.text,lineHeight:1.1,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{workout.title}</div>
-                        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                          {[["SETS",workout.sets],["PACE",workout.pace],["HR",workout.hr]].map(([l,v])=>(
-                            <div key={l}>
-                              <span style={{fontSize:8,color:t.textFaint,letterSpacing:"0.08em"}}>{l} </span>
-                              <span style={{fontSize:11,color:t.textMuted}}>{v}</span>
-                            </div>
-                          ))}
-                        </div>
+                        {log?.feedback ? (
+                          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                            <div><span style={{fontSize:8,color:t.textFaint,letterSpacing:"0.08em"}}>RPE </span><span style={{fontSize:11,color:log.feedback.rpe>=8?"#F87171":log.feedback.rpe>=6?"#FFE66D":"#34D399",fontFamily:"DM Mono"}}>{log.feedback.rpe}/10</span></div>
+                            {log.feedback.hrAvg&&<div><span style={{fontSize:8,color:t.textFaint,letterSpacing:"0.08em"}}>HR </span><span style={{fontSize:11,color:t.textMuted}}>{log.feedback.hrAvg}</span></div>}
+                            {log.feedback.paceAvg&&<div><span style={{fontSize:8,color:t.textFaint,letterSpacing:"0.08em"}}>PACE </span><span style={{fontSize:11,color:t.textMuted}}>{log.feedback.paceAvg}</span></div>}
+                            {log.adjustments&&<div><span style={{fontSize:8,color:t.textFaint,letterSpacing:"0.08em"}}>FATIGUE </span><span style={{fontSize:11,color:log.adjustments.fatigue>=7?"#F87171":log.adjustments.fatigue>=5?"#FFE66D":"#34D399",fontFamily:"DM Mono"}}>{log.adjustments.fatigue}/10</span></div>}
+                          </div>
+                        ) : (
+                          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                            {[["SETS",workout.sets],["PACE",workout.pace],["HR",workout.hr]].map(([l,v])=>(
+                              <div key={l}>
+                                <span style={{fontSize:8,color:t.textFaint,letterSpacing:"0.08em"}}>{l} </span>
+                                <span style={{fontSize:11,color:t.textMuted}}>{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {log?.manualActivities&&log.manualActivities.length>0&&(
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:3}}>
+                            {log.manualActivities.map((a,ai)=>(
+                              <span key={ai} style={{fontSize:8,color:"#4ECDC4",background:"#4ECDC411",borderRadius:3,padding:"1px 5px"}}>
+                                {ACTIVITY_PRESETS.find(p=>p.label===a.activity)?.icon||"💪"} {a.activity} {a.duration}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </>
                     ):(
-                      <div style={{fontSize:12,color:t.textGhost,fontStyle:"italic"}}>Rest / No workout</div>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{fontSize:12,color:t.textGhost,fontStyle:"italic"}}>Rest / No workout</div>
+                        {log?.manualActivities&&log.manualActivities.length>0&&(
+                          <div style={{display:"flex",gap:4}}>
+                            {log.manualActivities.map((a,ai)=>(
+                              <span key={ai} style={{fontSize:8,color:"#4ECDC4",background:"#4ECDC411",borderRadius:3,padding:"1px 5px"}}>
+                                {ACTIVITY_PRESETS.find(p=>p.label===a.activity)?.icon||"💪"} {a.activity}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                   {/* Chevron */}
@@ -1735,9 +1826,48 @@ export default function HyroxCalendar() {
                       ))}
                     </div>
                     <div style={{fontSize:12,color:t.textMuted,lineHeight:1.6}}>{workout.notes}</div>
+                    {/* Logged feedback preview */}
+                    {log?.feedback&&(
+                      <div style={{marginTop:10,padding:"8px 10px",background:t.bgInput,borderRadius:6,border:`1px solid ${t.borderLight}`}}>
+                        <div style={{fontSize:8,letterSpacing:"0.15em",color:t.textGhost,marginBottom:5}}>LOGGED</div>
+                        <div style={{display:"flex",gap:isDay?16:10,flexWrap:"wrap",alignItems:"center"}}>
+                          <div><span style={{fontSize:9,color:t.textFaint}}>RPE </span><span style={{fontSize:13,fontWeight:700,fontFamily:"DM Mono",color:log.feedback.rpe>=8?"#F87171":log.feedback.rpe>=6?"#FFE66D":"#34D399"}}>{log.feedback.rpe}/10</span></div>
+                          {log.feedback.hrAvg&&<div><span style={{fontSize:9,color:t.textFaint}}>HR </span><span style={{fontSize:12,fontFamily:"DM Mono",color:t.textMuted}}>{log.feedback.hrAvg} bpm</span></div>}
+                          {log.feedback.paceAvg&&<div><span style={{fontSize:9,color:t.textFaint}}>PACE </span><span style={{fontSize:12,fontFamily:"DM Mono",color:t.textMuted}}>{log.feedback.paceAvg}</span></div>}
+                          {log.adjustments&&(
+                            <>
+                              <div><span style={{fontSize:9,color:t.textFaint}}>FATIGUE </span><span style={{fontSize:13,fontWeight:700,fontFamily:"DM Mono",color:log.adjustments.fatigue>=7?"#F87171":log.adjustments.fatigue>=5?"#FFE66D":"#34D399"}}>{log.adjustments.fatigue}</span></div>
+                              <div><span style={{fontSize:9,color:t.textFaint}}>PERF </span><span style={{fontSize:13,fontWeight:700,fontFamily:"DM Mono",color:log.adjustments.performance>=7?"#34D399":log.adjustments.performance>=5?"#FFE66D":"#F87171"}}>{log.adjustments.performance}</span></div>
+                            </>
+                          )}
+                        </div>
+                        {log.feedback.notes&&<div style={{fontSize:10,color:t.textFaint,fontStyle:"italic",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{log.feedback.notes}</div>}
+                      </div>
+                    )}
+                    {/* Manual activities preview */}
+                    {log?.manualActivities&&log.manualActivities.length>0&&(
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                        {log.manualActivities.map((a,ai)=>{
+                          const ap=ACTIVITY_PRESETS.find(p=>p.label===a.activity);
+                          return <span key={ai} style={{fontSize:10,color:ap?.color||"#4ECDC4",background:(ap?.color||"#4ECDC4")+"11",borderRadius:4,padding:"3px 8px",border:`1px solid ${(ap?.color||"#4ECDC4")}33`}}>{ap?.icon||"💪"} {a.activity} · {a.duration}</span>;
+                        })}
+                      </div>
+                    )}
                   </>
                 )}
-                {!workout&&<div style={{fontSize:12,color:t.textGhost,fontStyle:"italic"}}>No workout scheduled</div>}
+                {!workout&&(
+                  <div>
+                    <div style={{fontSize:12,color:t.textGhost,fontStyle:"italic"}}>No workout scheduled</div>
+                    {log?.manualActivities&&log.manualActivities.length>0&&(
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                        {log.manualActivities.map((a,ai)=>{
+                          const ap=ACTIVITY_PRESETS.find(p=>p.label===a.activity);
+                          return <span key={ai} style={{fontSize:10,color:ap?.color||"#4ECDC4",background:(ap?.color||"#4ECDC4")+"11",borderRadius:4,padding:"3px 8px",border:`1px solid ${(ap?.color||"#4ECDC4")}33`}}>{ap?.icon||"💪"} {a.activity} · {a.duration}</span>;
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           }
@@ -1764,6 +1894,12 @@ export default function HyroxCalendar() {
                     </>
                   )}
                   {log?.status&&<div style={{position:"absolute",top:bp.isMobile?3:5,right:bp.isMobile?3:5,width:bp.isMobile?5:7,height:bp.isMobile?5:7,borderRadius:"50%",background:statusColor(log.status)!}}/>}
+                  {/* Logged RPE preview on desktop */}
+                  {!bp.isMobile&&log?.feedback&&(
+                    <div style={{position:"absolute",bottom:4,left:5,fontSize:8,fontFamily:"DM Mono",color:log.feedback.rpe>=8?"#F87171":log.feedback.rpe>=6?"#FFE66D":"#34D399",lineHeight:1,opacity:0.85}}>
+                      RPE {log.feedback.rpe}
+                    </div>
+                  )}
                 </>
               )}
               {log?.manualActivities&&log.manualActivities.length>0&&<div style={{position:"absolute",bottom:bp.isMobile?2:4,right:bp.isMobile?2:4,fontSize:bp.isMobile?7:9,color:"#4ECDC4",lineHeight:1}}>+{log.manualActivities.length}</div>}
