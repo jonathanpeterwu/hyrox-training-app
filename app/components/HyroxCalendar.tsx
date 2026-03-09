@@ -130,6 +130,14 @@ interface Feedback {
   workoutType: string;
 }
 
+interface ManualActivity {
+  activity: string;
+  duration: string;
+  metrics: { label: string; value: string }[];
+  notes: string;
+  timestamp: number;
+}
+
 interface LogEntry {
   status: string;
   feedback?: {
@@ -151,6 +159,7 @@ interface LogEntry {
       sentimentScore: number;
     };
   };
+  manualActivities?: ManualActivity[];
 }
 
 interface ParsedResponse {
@@ -554,6 +563,21 @@ export default function HyroxCalendar() {
   const [progressionOverrides, setProgressionOverrides] = useState<Record<number, { fatigueOverride?: number; performanceOverride?: number }>>({});
   const [feedbackModal, setFeedbackModal] = useState<string | null>(null);
   const [feedbackForm, setFeedbackForm] = useState({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
+  const [manualLogModal, setManualLogModal] = useState<string | null>(null);
+  const ACTIVITY_PRESETS: { label: string; icon: string; defaultMetrics: string[] }[] = [
+    { label: "Sauna", icon: "🧖", defaultMetrics: ["Temperature", "Humidity %"] },
+    { label: "Bike Erg", icon: "🚴", defaultMetrics: ["Avg HR (bpm)", "Avg Power (W)", "Avg Pace"] },
+    { label: "Row Erg", icon: "🚣", defaultMetrics: ["Avg HR (bpm)", "Avg Power (W)", "Avg Pace (/500m)"] },
+    { label: "Ski Erg", icon: "⛷️", defaultMetrics: ["Avg HR (bpm)", "Avg Power (W)", "Avg Pace (/500m)"] },
+    { label: "Swim", icon: "🏊", defaultMetrics: ["Avg HR (bpm)", "Avg Pace (/100m)", "Distance (m)"] },
+    { label: "Yoga", icon: "🧘", defaultMetrics: ["Type (flow/yin/hot)"] },
+    { label: "Cold Plunge", icon: "🧊", defaultMetrics: ["Temperature", "Rounds"] },
+    { label: "Walk", icon: "🚶", defaultMetrics: ["Distance (mi)", "Avg HR (bpm)"] },
+    { label: "Other", icon: "💪", defaultMetrics: [] },
+  ];
+  const [manualForm, setManualForm] = useState<{ activity: string; duration: string; metrics: { label: string; value: string }[]; notes: string }>({
+    activity: "", duration: "", metrics: [], notes: "",
+  });
   // Settings state
   const [startDate, setStartDate] = useState<Date>(DEFAULT_START_DATE);
   const [programWeeks, setProgramWeeks] = useState(DEFAULT_PROGRAM_WEEKS);
@@ -700,6 +724,33 @@ export default function HyroxCalendar() {
     setFeedbackForm({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
   }
 
+  function submitManualLog(dateStr: string) {
+    if (!manualForm.activity || !manualForm.duration) return;
+    const entry: ManualActivity = {
+      activity: manualForm.activity,
+      duration: manualForm.duration,
+      metrics: manualForm.metrics.filter(m => m.value.trim()),
+      notes: manualForm.notes,
+      timestamp: Date.now(),
+    };
+    setWorkoutLog(prev => {
+      const existing = prev[dateStr] || {};
+      const existingManual = existing.manualActivities || [];
+      return { ...prev, [dateStr]: { ...existing, status: existing.status || "yes", manualActivities: [...existingManual, entry] } };
+    });
+    setManualLogModal(null);
+    setManualForm({ activity: "", duration: "", metrics: [], notes: "" });
+  }
+
+  function removeManualActivity(dateStr: string, idx: number) {
+    setWorkoutLog(prev => {
+      const existing = prev[dateStr];
+      if (!existing?.manualActivities) return prev;
+      const updated = existing.manualActivities.filter((_, i) => i !== idx);
+      return { ...prev, [dateStr]: { ...existing, manualActivities: updated.length ? updated : undefined } };
+    });
+  }
+
   // ── AI CHAT (via server-side proxy) ───────────────────────────────────────
   async function sendMessage(mode: string, userText: string, dateStr: string | null = null) {
     if (!userText.trim()) return;
@@ -714,6 +765,7 @@ export default function HyroxCalendar() {
     if (mode==="day" && workout) {
       contextBlock = `\n\nCURRENT WORKOUT CONTEXT:\nDate: ${dateStr}\nWeek: ${workout.weekNum}\nWorkout: ${workout.title}\nSets: ${workout.sets}\nPace: ${workout.pace}\nRest: ${workout.rest}\nHR target: ${workout.hr} bpm\nNotes: ${workout.notes}`;
       if (log?.feedback) contextBlock += `\n\nFEEDBACK LOGGED:\nRPE: ${log.feedback.rpe}/10\nStatus: ${log.feedback.completed}\nNotes: ${log.feedback.notes || "none"}\nAdjusted fatigue: ${log.adjustments?.fatigue}/10\nAdjusted performance: ${log.adjustments?.performance}/10`;
+      if (log?.manualActivities?.length) contextBlock += `\n\nADDITIONAL ACTIVITIES LOGGED:\n${log.manualActivities.map(a=>`- ${a.activity} (${a.duration})${a.metrics.length?": "+a.metrics.map(m=>`${m.label}=${m.value}`).join(", "):""}${a.notes?" — "+a.notes:""}`).join("\n")}`;
       if (workout.isOverridden) contextBlock += "\n\n(This workout has been manually overridden by a previous AI adjustment)";
     } else if (mode==="plan") {
       const overrideSummary = Object.keys(progressionOverrides).length > 0
@@ -794,6 +846,7 @@ export default function HyroxCalendar() {
     const weekNum = currentWorkout?.weekNum || 0;
     const dayLog = dateStr ? workoutLog[dateStr] : null;
     const isLogged = !!dayLog?.feedback;
+    const hasManualActivities = !!(dayLog?.manualActivities?.length);
 
     // ── POST-WORKOUT prompts (when feedback is logged) ──
     const postWorkoutBase: string[] = [];
@@ -846,6 +899,18 @@ export default function HyroxCalendar() {
         "What should I eat and do in the next 2 hours for optimal recovery?",
         "How does this workout fit in the bigger picture of my training block?",
       );
+    }
+
+    // Manual activity-specific prompts
+    if (hasManualActivities) {
+      const activities = dayLog!.manualActivities!;
+      const hasSauna = activities.some(a => a.activity.toLowerCase().includes("sauna"));
+      const hasCold = activities.some(a => a.activity.toLowerCase().includes("cold") || a.activity.toLowerCase().includes("plunge"));
+      const hasCross = activities.some(a => ["Bike Erg","Row Erg","Ski Erg","Swim","Walk"].includes(a.activity));
+      if (hasSauna) postWorkoutBase.push("Does sauna help or hurt recovery before tomorrow's session?");
+      if (hasCold) postWorkoutBase.push("Should I do cold plunge before or after my training session?");
+      if (hasCross) postWorkoutBase.push("Is this cross-training adding too much volume to my plan?");
+      if (hasSauna && hasCold) postWorkoutBase.push("What's the ideal contrast therapy protocol (sauna + cold)?");
     }
 
     // ── PRE-WORKOUT prompts ──
@@ -1045,11 +1110,39 @@ export default function HyroxCalendar() {
     const isPast = date<today;
 
     if (!workout || !meta) return (
-      <div style={{padding:60,textAlign:"center",color:t.textFaint}}>
+      <div style={{padding:40,textAlign:"center",color:t.textFaint}}>
         <div style={{fontSize:40,marginBottom:12}}>📅</div>
         <div style={{fontFamily:"Barlow Condensed",fontSize:18,letterSpacing:"0.1em"}}>Outside training window</div>
         <div style={{fontSize:13,marginTop:6,color:t.textFaint}}>Program: {startDate.toLocaleDateString("en-US",{month:"short",day:"numeric"})} – {new Date(startDate.getTime()+(programWeeks*7)*86400000).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
         <button onClick={()=>setSelectedDate(null)} style={{marginTop:20,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"8px 18px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← BACK TO CALENDAR</button>
+        {/* Manual activities even outside training window */}
+        <div style={{marginTop:24,maxWidth:440,marginLeft:"auto",marginRight:"auto",textAlign:"left"}}>
+          <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:"16px 18px"}}>
+            <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:t.textFaint,marginBottom:10}}>ADDITIONAL ACTIVITIES</div>
+            {log?.manualActivities?.map((a, i) => (
+              <div key={i} style={{background:t.bgInput,borderRadius:6,padding:"10px 12px",marginBottom:8,border:`1px solid ${t.borderLight}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:700,color:t.text}}>
+                    {ACTIVITY_PRESETS.find(p=>p.label===a.activity)?.icon||"💪"} {a.activity}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{fontSize:12,color:"#FF6B35",fontFamily:"DM Mono"}}>{a.duration}</div>
+                    <button onClick={()=>removeManualActivity(key,i)} style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:12,padding:"2px 4px",lineHeight:1}}>✕</button>
+                  </div>
+                </div>
+                {a.metrics.length>0&&(
+                  <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                    {a.metrics.map((m,j)=>(
+                      <div key={j}><span style={{fontSize:8,color:t.textGhost}}>{m.label}: </span><span style={{fontSize:11,color:t.textMuted}}>{m.value}</span></div>
+                    ))}
+                  </div>
+                )}
+                {a.notes&&<div style={{fontSize:11,color:t.textMuted,fontStyle:"italic",marginTop:4}}>{a.notes}</div>}
+              </div>
+            ))}
+            <button onClick={()=>{setManualLogModal(key);setManualForm({activity:"",duration:"",metrics:[],notes:""});}} style={{background:t.bgInput,border:`1px dashed ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"9px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>+ LOG ACTIVITY (sauna, bike, swim…)</button>
+          </div>
+        </div>
       </div>
     );
 
@@ -1148,6 +1241,39 @@ export default function HyroxCalendar() {
               )}
             </div>
           )}
+
+          {/* Manual Activities */}
+          <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"12px 14px":"16px 18px",marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:t.textFaint}}>ADDITIONAL ACTIVITIES</div>
+              <div style={{fontSize:9,color:t.textGhost}}>{log?.manualActivities?.length||0} logged</div>
+            </div>
+            {log?.manualActivities?.map((a, i) => (
+              <div key={i} style={{background:t.bgInput,borderRadius:6,padding:"10px 12px",marginBottom:8,border:`1px solid ${t.borderLight}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                  <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:700,color:t.text}}>
+                    {ACTIVITY_PRESETS.find(p=>p.label===a.activity)?.icon||"💪"} {a.activity}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{fontSize:12,color:"#FF6B35",fontFamily:"DM Mono"}}>{a.duration}</div>
+                    <button onClick={(e)=>{e.stopPropagation();removeManualActivity(key,i);}} style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:12,padding:"2px 4px",lineHeight:1}} title="Remove">✕</button>
+                  </div>
+                </div>
+                {a.metrics.length>0&&(
+                  <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:a.notes?6:0}}>
+                    {a.metrics.map((m,j)=>(
+                      <div key={j}>
+                        <span style={{fontSize:8,letterSpacing:"0.1em",color:t.textGhost}}>{m.label}: </span>
+                        <span style={{fontSize:11,color:t.textMuted}}>{m.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {a.notes&&<div style={{fontSize:11,color:t.textMuted,fontStyle:"italic",marginTop:4}}>{a.notes}</div>}
+              </div>
+            ))}
+            <button onClick={()=>{setManualLogModal(key);setManualForm({activity:"",duration:"",metrics:[],notes:""});}} style={{background:`${t.bgInput}`,border:`1px dashed ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"9px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>+ LOG ACTIVITY (sauna, bike, swim…)</button>
+          </div>
 
           {/* Mobile: chat toggle button */}
           {bp.isMobile && (
@@ -1631,6 +1757,7 @@ export default function HyroxCalendar() {
                   {log?.status&&<div style={{position:"absolute",top:bp.isMobile?3:5,right:bp.isMobile?3:5,width:bp.isMobile?5:7,height:bp.isMobile?5:7,borderRadius:"50%",background:statusColor(log.status)!}}/>}
                 </>
               )}
+              {log?.manualActivities&&log.manualActivities.length>0&&<div style={{position:"absolute",bottom:bp.isMobile?2:4,right:bp.isMobile?2:4,fontSize:bp.isMobile?7:9,color:"#4ECDC4",lineHeight:1}}>+{log.manualActivities.length}</div>}
             </div>
           );
         };
@@ -1799,6 +1926,125 @@ export default function HyroxCalendar() {
           </div>
         );
       })()}
+
+      {/* Manual Activity Log Modal */}
+      {manualLogModal&&(
+        <div style={{position:"fixed",inset:0,background:t.overlayBg,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}}>
+          <div style={{background:t.modalBg,border:`1px solid ${t.borderFocus}`,borderRadius:10,width:"100%",maxWidth:480,overflow:"hidden",maxHeight:"90vh",overflowY:"auto"}}>
+            <div style={{height:3,background:"#4ECDC4"}}/>
+            <div style={{padding:"18px 22px"}}>
+              <div style={{fontFamily:"Barlow Condensed",fontSize:18,fontWeight:900,letterSpacing:"0.1em",color:t.text,marginBottom:3}}>LOG ACTIVITY</div>
+              <div style={{fontSize:10,color:t.textFaint,marginBottom:18}}>Sauna, bike, swim, walk, or anything else</div>
+
+              {/* Activity selector */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>ACTIVITY TYPE</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {ACTIVITY_PRESETS.map(preset=>(
+                    <button
+                      key={preset.label}
+                      onClick={()=>{
+                        setManualForm(f=>({
+                          ...f,
+                          activity: preset.label,
+                          metrics: preset.defaultMetrics.map(m=>({label:m,value:""})),
+                        }));
+                      }}
+                      style={{
+                        background:manualForm.activity===preset.label?"#4ECDC422":"none",
+                        border:`1px solid ${manualForm.activity===preset.label?"#4ECDC4":t.borderFocus}`,
+                        borderRadius:4,color:manualForm.activity===preset.label?"#4ECDC4":t.textFaint,
+                        cursor:"pointer",padding:"6px 10px",fontSize:11,fontFamily:"DM Mono",
+                        display:"flex",alignItems:"center",gap:4,
+                      }}
+                    >
+                      <span>{preset.icon}</span> {preset.label}
+                    </button>
+                  ))}
+                </div>
+                {/* Custom activity name if "Other" selected */}
+                {manualForm.activity==="Other"&&(
+                  <input
+                    type="text" placeholder="Activity name…"
+                    value={manualForm.activity==="Other"?"":undefined}
+                    onChange={e=>{
+                      const val = e.target.value;
+                      if (val) setManualForm(f=>({...f,activity:val}));
+                    }}
+                    style={{width:"100%",marginTop:8,background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:11,fontFamily:"DM Mono",outline:"none"}}
+                  />
+                )}
+              </div>
+
+              {/* Duration */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>DURATION</div>
+                <div style={{display:"flex",gap:6,marginBottom:6}}>
+                  {["10 min","15 min","20 min","30 min","45 min","60 min","90 min"].map(d=>(
+                    <button key={d} onClick={()=>setManualForm(f=>({...f,duration:d}))}
+                      style={{background:manualForm.duration===d?"#FF6B3522":"none",border:`1px solid ${manualForm.duration===d?"#FF6B35":t.borderFocus}`,borderRadius:4,color:manualForm.duration===d?"#FF6B35":t.textFaint,cursor:"pointer",padding:"5px 8px",fontSize:10,fontFamily:"DM Mono"}}>
+                      {d}
+                    </button>
+                  ))}
+                </div>
+                <input type="text" placeholder="Or type: 25 min, 1:30:00, etc." value={manualForm.duration} onChange={e=>setManualForm(f=>({...f,duration:e.target.value}))}
+                  style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:11,fontFamily:"DM Mono",outline:"none"}}/>
+              </div>
+
+              {/* Dynamic metrics */}
+              {manualForm.metrics.length>0&&(
+                <div style={{marginBottom:14}}>
+                  <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>METRICS</div>
+                  <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr":"1fr 1fr",gap:8}}>
+                    {manualForm.metrics.map((m,i)=>(
+                      <div key={i}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                          {m.label==="Custom"?(
+                            <input type="text" placeholder="Metric name" value={m.label==="Custom"?"":m.label}
+                              onChange={e=>{const v=e.target.value;setManualForm(f=>({...f,metrics:f.metrics.map((mm,ii)=>ii===i?{...mm,label:v||"Custom"}:mm)}));}}
+                              style={{background:"none",border:"none",fontSize:8,letterSpacing:"0.15em",color:t.textFaint,outline:"none",padding:0,width:"80%",fontFamily:"DM Mono"}}/>
+                          ):(
+                            <div style={{fontSize:8,letterSpacing:"0.15em",color:t.textGhost}}>{m.label.toUpperCase()}</div>
+                          )}
+                          <button onClick={()=>setManualForm(f=>({...f,metrics:f.metrics.filter((_,ii)=>ii!==i)}))}
+                            style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:10,padding:"0 2px",lineHeight:1}}>✕</button>
+                        </div>
+                        <input type="text" placeholder={m.label==="Custom"?"Value":m.label} value={m.value}
+                          onChange={e=>{const v=e.target.value;setManualForm(f=>({...f,metrics:f.metrics.map((mm,ii)=>ii===i?{...mm,value:v}:mm)}));}}
+                          style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:11,fontFamily:"DM Mono",outline:"none"}}/>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Add custom metric */}
+              <div style={{marginBottom:14}}>
+                <button onClick={()=>setManualForm(f=>({...f,metrics:[...f.metrics,{label:"Custom",value:""}]}))}
+                  style={{background:"none",border:`1px dashed ${t.borderFocus}`,borderRadius:4,color:t.textGhost,cursor:"pointer",padding:"5px 10px",fontSize:9,fontFamily:"DM Mono",letterSpacing:"0.1em"}}>
+                  + ADD METRIC
+                </button>
+              </div>
+
+              {/* Notes */}
+              <div style={{marginBottom:18}}>
+                <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>NOTES</div>
+                <textarea value={manualForm.notes} onChange={e=>setManualForm(f=>({...f,notes:e.target.value}))}
+                  placeholder="felt great, focused on deep breathing, cold after…"
+                  rows={2} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none",resize:"none"}}/>
+              </div>
+
+              {/* Actions */}
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setManualLogModal(null)} style={{flex:1,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"9px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>CANCEL</button>
+                <button onClick={()=>submitManualLog(manualLogModal)}
+                  disabled={!manualForm.activity||!manualForm.duration}
+                  style={{flex:2,background:!manualForm.activity||!manualForm.duration?"#333":"#4ECDC4",border:"none",borderRadius:4,color:isDark?"#0A0A0A":"#FFF",cursor:!manualForm.activity||!manualForm.duration?"not-allowed":"pointer",padding:"9px",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:900,letterSpacing:"0.1em",opacity:!manualForm.activity||!manualForm.duration?0.5:1}}>SAVE ACTIVITY</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
