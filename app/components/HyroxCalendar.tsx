@@ -651,14 +651,41 @@ export default function HyroxCalendar() {
   useEffect(() => { try { localStorage.setItem("hyrox-day-messages", JSON.stringify(dayMessages)); } catch {} }, [dayMessages]);
   useEffect(() => { try { localStorage.setItem("hyrox-plan-messages", JSON.stringify(planMessages)); } catch {} }, [planMessages]);
 
-  // Keyboard shortcuts: D/W/M for calendar modes
+  // Keyboard shortcuts: D/W/M for calendar modes, arrows for navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Don't fire when typing in inputs, textareas, selects, or contentEditable
       const el = e.target as HTMLElement;
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return;
       if (el.isContentEditable) return;
-      // Don't fire when a workout day view or chat panel is active
+      // Don't fire when modals are open
+      if (feedbackModal || manualLogModal) return;
+
+      // Arrow keys: navigate days in day view or when a date is selected
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const dir = e.key === "ArrowLeft" ? -1 : 1;
+        if (selectedDate) {
+          const next = new Date(selectedDate.getTime() + dir * 86400000);
+          setSelectedDate(next);
+        } else if (view === "calendar") {
+          if (calendarMode === "day") setFocusDate(d => new Date(d.getTime() + dir * 86400000));
+          else if (calendarMode === "week") setFocusDate(d => new Date(d.getTime() + dir * 7 * 86400000));
+          else {
+            if (dir === -1) setCurrentMonth(m => { if (m === 0) { setCurrentYear(y => y - 1); return 11; } return m - 1; });
+            else setCurrentMonth(m => { if (m === 11) { setCurrentYear(y => y + 1); return 0; } return m + 1; });
+          }
+        }
+        return;
+      }
+
+      // Escape: go back from day view
+      if (e.key === "Escape" && selectedDate) {
+        setSelectedDate(null);
+        return;
+      }
+
+      // Don't fire D/W/M when a workout day view or chat panel is active
       if (selectedDate || view === "planchat" || showMobileChat) return;
       if (e.key === "d" || e.key === "D") { setCalendarMode("day"); setView("calendar"); setSelectedDate(null); }
       if (e.key === "w" || e.key === "W") { setCalendarMode("week"); setView("calendar"); setSelectedDate(null); }
@@ -666,7 +693,7 @@ export default function HyroxCalendar() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectedDate, view, showMobileChat]);
+  }, [selectedDate, view, showMobileChat, calendarMode, feedbackModal, manualLogModal]);
 
   const totalDays = programWeeks * 7 + 1; // +1 for opening Sunday
 
@@ -1813,7 +1840,7 @@ export default function HyroxCalendar() {
                 {workout&&meta&&(
                   <>
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-                      <div style={{width:6,height:6,borderRadius:"50%",background:hasOverride?"#C084FC":meta.color}}/>
+                      {hasOverride&&<div style={{width:6,height:6,borderRadius:"50%",background:"#C084FC"}}/>}
                       <span style={{fontSize:10,letterSpacing:"0.15em",color:meta.color}}>{meta.icon} {meta.label}</span>
                     </div>
                     <div style={{fontFamily:"Barlow Condensed",fontSize:isDay?24:18,fontWeight:900,color:t.text,lineHeight:1.1,marginBottom:8}}>{workout.title}</div>
