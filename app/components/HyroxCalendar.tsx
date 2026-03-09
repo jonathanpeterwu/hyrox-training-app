@@ -564,19 +564,35 @@ export default function HyroxCalendar() {
   const [feedbackModal, setFeedbackModal] = useState<string | null>(null);
   const [feedbackForm, setFeedbackForm] = useState({rpe:5,completed:"yes",notes:"",hrAvg:"",hrMax:"",paceAvg:""});
   const [manualLogModal, setManualLogModal] = useState<string | null>(null);
-  const ACTIVITY_PRESETS: { label: string; icon: string; defaultMetrics: string[] }[] = [
-    { label: "Sauna", icon: "🧖", defaultMetrics: ["Temperature", "Humidity %"] },
-    { label: "Bike Erg", icon: "🚴", defaultMetrics: ["Avg HR (bpm)", "Avg Power (W)", "Avg Pace"] },
-    { label: "Row Erg", icon: "🚣", defaultMetrics: ["Avg HR (bpm)", "Avg Power (W)", "Avg Pace (/500m)"] },
-    { label: "Ski Erg", icon: "⛷️", defaultMetrics: ["Avg HR (bpm)", "Avg Power (W)", "Avg Pace (/500m)"] },
-    { label: "Swim", icon: "🏊", defaultMetrics: ["Avg HR (bpm)", "Avg Pace (/100m)", "Distance (m)"] },
-    { label: "Yoga", icon: "🧘", defaultMetrics: ["Type (flow/yin/hot)"] },
-    { label: "Cold Plunge", icon: "🧊", defaultMetrics: ["Temperature", "Rounds"] },
-    { label: "Walk", icon: "🚶", defaultMetrics: ["Distance (mi)", "Avg HR (bpm)"] },
-    { label: "Other", icon: "💪", defaultMetrics: [] },
+  const ACTIVITY_PRESETS: { label: string; icon: string; color: string; category: string; defaultMetrics: { label: string; placeholder: string; unit?: string }[]; defaultDurations: string[] }[] = [
+    // Cardio
+    { label: "Run", icon: "🏃", color: "#FF6B35", category: "cardio", defaultMetrics: [{ label: "Distance", placeholder: "3.1", unit: "mi" }, { label: "Avg Pace", placeholder: "8:30", unit: "/mi" }, { label: "Avg HR", placeholder: "155", unit: "bpm" }], defaultDurations: ["20 min","30 min","45 min","60 min"] },
+    { label: "Walk", icon: "🚶", color: "#34D399", category: "cardio", defaultMetrics: [{ label: "Distance", placeholder: "2.0", unit: "mi" }, { label: "Avg HR", placeholder: "110", unit: "bpm" }], defaultDurations: ["20 min","30 min","45 min","60 min"] },
+    { label: "Bike", icon: "🚴", color: "#60A5FA", category: "cardio", defaultMetrics: [{ label: "Distance", placeholder: "12", unit: "mi" }, { label: "Avg HR", placeholder: "140", unit: "bpm" }, { label: "Avg Power", placeholder: "180", unit: "W" }], defaultDurations: ["20 min","30 min","45 min","60 min","90 min"] },
+    { label: "Swim", icon: "🏊", color: "#818CF8", category: "cardio", defaultMetrics: [{ label: "Distance", placeholder: "1500", unit: "m" }, { label: "Avg Pace", placeholder: "1:45", unit: "/100m" }, { label: "Avg HR", placeholder: "145", unit: "bpm" }], defaultDurations: ["20 min","30 min","45 min","60 min"] },
+    // Machines
+    { label: "Bike Erg", icon: "🚲", color: "#F97316", category: "machine", defaultMetrics: [{ label: "Avg HR", placeholder: "145", unit: "bpm" }, { label: "Avg Power", placeholder: "170", unit: "W" }, { label: "Cals", placeholder: "350", unit: "cal" }], defaultDurations: ["15 min","20 min","30 min","45 min"] },
+    { label: "Row Erg", icon: "🚣", color: "#F97316", category: "machine", defaultMetrics: [{ label: "Avg HR", placeholder: "155", unit: "bpm" }, { label: "Avg Power", placeholder: "190", unit: "W" }, { label: "Avg Pace", placeholder: "1:55", unit: "/500m" }], defaultDurations: ["15 min","20 min","30 min","45 min"] },
+    { label: "Ski Erg", icon: "⛷️", color: "#F97316", category: "machine", defaultMetrics: [{ label: "Avg HR", placeholder: "150", unit: "bpm" }, { label: "Avg Power", placeholder: "160", unit: "W" }, { label: "Avg Pace", placeholder: "2:05", unit: "/500m" }], defaultDurations: ["10 min","15 min","20 min","30 min"] },
+    // Recovery
+    { label: "Sauna", icon: "🧖", color: "#EF4444", category: "recovery", defaultMetrics: [{ label: "Temperature", placeholder: "185", unit: "°F" }, { label: "Humidity", placeholder: "60", unit: "%" }], defaultDurations: ["10 min","15 min","20 min","30 min"] },
+    { label: "Cold Plunge", icon: "🧊", color: "#22D3EE", category: "recovery", defaultMetrics: [{ label: "Temperature", placeholder: "45", unit: "°F" }, { label: "Rounds", placeholder: "3", unit: "" }], defaultDurations: ["2 min","3 min","5 min","10 min"] },
+    { label: "Stretching", icon: "🤸", color: "#A78BFA", category: "recovery", defaultMetrics: [{ label: "Focus Area", placeholder: "hips, hamstrings", unit: "" }], defaultDurations: ["10 min","15 min","20 min","30 min"] },
+    { label: "Massage", icon: "💆", color: "#A78BFA", category: "recovery", defaultMetrics: [{ label: "Type", placeholder: "deep tissue, sports", unit: "" }], defaultDurations: ["30 min","45 min","60 min","90 min"] },
+    // Other
+    { label: "Yoga", icon: "🧘", color: "#C084FC", category: "other", defaultMetrics: [{ label: "Type", placeholder: "flow, yin, hot", unit: "" }], defaultDurations: ["20 min","30 min","45 min","60 min","90 min"] },
+    { label: "Strength", icon: "🏋️", color: "#FFE66D", category: "other", defaultMetrics: [{ label: "Focus", placeholder: "upper, lower, full", unit: "" }, { label: "Avg HR", placeholder: "130", unit: "bpm" }], defaultDurations: ["30 min","45 min","60 min"] },
+    { label: "HIIT", icon: "⚡", color: "#F87171", category: "other", defaultMetrics: [{ label: "Rounds", placeholder: "8", unit: "" }, { label: "Avg HR", placeholder: "165", unit: "bpm" }, { label: "Max HR", placeholder: "185", unit: "bpm" }], defaultDurations: ["15 min","20 min","30 min"] },
+    { label: "Other", icon: "💪", color: "#9CA3AF", category: "other", defaultMetrics: [], defaultDurations: ["15 min","20 min","30 min","45 min","60 min"] },
   ];
-  const [manualForm, setManualForm] = useState<{ activity: string; duration: string; metrics: { label: string; value: string }[]; notes: string }>({
-    activity: "", duration: "", metrics: [], notes: "",
+  const ACTIVITY_CATEGORIES = [
+    { key: "cardio", label: "CARDIO", color: "#FF6B35" },
+    { key: "machine", label: "MACHINES", color: "#F97316" },
+    { key: "recovery", label: "RECOVERY", color: "#22D3EE" },
+    { key: "other", label: "OTHER", color: "#9CA3AF" },
+  ];
+  const [manualForm, setManualForm] = useState<{ activity: string; customName: string; duration: string; metrics: { label: string; value: string; unit?: string }[]; notes: string; rpe: number }>({
+    activity: "", customName: "", duration: "", metrics: [], notes: "", rpe: 5,
   });
   // Settings state
   const [startDate, setStartDate] = useState<Date>(DEFAULT_START_DATE);
@@ -725,11 +741,12 @@ export default function HyroxCalendar() {
   }
 
   function submitManualLog(dateStr: string) {
-    if (!manualForm.activity || !manualForm.duration) return;
+    const actName = manualForm.activity === "Other" && manualForm.customName ? manualForm.customName : manualForm.activity;
+    if (!actName || !manualForm.duration) return;
     const entry: ManualActivity = {
-      activity: manualForm.activity,
+      activity: actName,
       duration: manualForm.duration,
-      metrics: manualForm.metrics.filter(m => m.value.trim()),
+      metrics: manualForm.metrics.filter(m => m.value.trim()).map(m => ({ label: m.unit ? `${m.label} (${m.unit})` : m.label, value: m.value + (m.unit && m.value ? ` ${m.unit}` : "") })),
       notes: manualForm.notes,
       timestamp: Date.now(),
     };
@@ -739,7 +756,7 @@ export default function HyroxCalendar() {
       return { ...prev, [dateStr]: { ...existing, status: existing.status || "yes", manualActivities: [...existingManual, entry] } };
     });
     setManualLogModal(null);
-    setManualForm({ activity: "", duration: "", metrics: [], notes: "" });
+    setManualForm({ activity: "", customName: "", duration: "", metrics: [], notes: "", rpe: 5 });
   }
 
   function removeManualActivity(dateStr: string, idx: number) {
@@ -1099,6 +1116,52 @@ export default function HyroxCalendar() {
     );
   }
 
+  // ── MANUAL ACTIVITIES SECTION (shared between DayView & outside-window) ──
+  function renderManualActivitiesSection(key: string, log: LogEntry | undefined) {
+    const activities = log?.manualActivities || [];
+    return (
+      <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"12px 14px":"16px 18px",marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:activities.length?12:0}}>
+          <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:t.textFaint}}>ADDITIONAL ACTIVITIES</div>
+          {activities.length>0&&<div style={{fontSize:9,color:t.textGhost}}>{activities.length} logged</div>}
+        </div>
+        {activities.map((a, i) => {
+          const preset = ACTIVITY_PRESETS.find(p => p.label === a.activity);
+          const accentColor = preset?.color || "#4ECDC4";
+          return (
+            <div key={i} style={{background:t.bgInput,borderRadius:8,padding:"12px 14px",marginBottom:8,border:`1px solid ${accentColor}22`,borderLeft:`3px solid ${accentColor}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:a.metrics.length||a.notes?8:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:20}}>{preset?.icon||"💪"}</span>
+                  <div>
+                    <div style={{fontFamily:"Barlow Condensed",fontSize:15,fontWeight:900,color:t.text,lineHeight:1}}>{a.activity}</div>
+                    <div style={{fontSize:9,color:t.textGhost,marginTop:2}}>{a.duration}</div>
+                  </div>
+                </div>
+                <button onClick={(e)=>{e.stopPropagation();removeManualActivity(key,i);}} style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textGhost,cursor:"pointer",fontSize:9,padding:"3px 8px",fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}} title="Remove">✕</button>
+              </div>
+              {a.metrics.length>0&&(
+                <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:a.notes?6:0}}>
+                  {a.metrics.map((m,j)=>(
+                    <div key={j} style={{background:t.bgCard,borderRadius:4,padding:"4px 8px"}}>
+                      <span style={{fontSize:8,letterSpacing:"0.1em",color:t.textGhost}}>{m.label.replace(/\s*\([^)]*\)\s*$/,"")}: </span>
+                      <span style={{fontSize:12,color:accentColor,fontFamily:"DM Mono",fontWeight:700}}>{m.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {a.notes&&<div style={{fontSize:11,color:t.textMuted,fontStyle:"italic",marginTop:4,paddingTop:4,borderTop:`1px solid ${t.borderLight}`}}>{a.notes}</div>}
+            </div>
+          );
+        })}
+        <button onClick={()=>{setManualLogModal(key);setManualForm({activity:"",customName:"",duration:"",metrics:[],notes:"",rpe:5});}}
+          style={{background:t.bgInput,border:`1px dashed ${t.borderFocus}`,borderRadius:6,color:t.textFaint,cursor:"pointer",padding:"10px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <span style={{fontSize:14}}>+</span> LOG ACTIVITY
+        </button>
+      </div>
+    );
+  }
+
   // ── DAY VIEW ──────────────────────────────────────────────────────────────
   function DayView({ date }: { date: Date }) {
     const workout = getWorkoutForDate(date);
@@ -1117,31 +1180,7 @@ export default function HyroxCalendar() {
         <button onClick={()=>setSelectedDate(null)} style={{marginTop:20,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"8px 18px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>← BACK TO CALENDAR</button>
         {/* Manual activities even outside training window */}
         <div style={{marginTop:24,maxWidth:440,marginLeft:"auto",marginRight:"auto",textAlign:"left"}}>
-          <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:"16px 18px"}}>
-            <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:t.textFaint,marginBottom:10}}>ADDITIONAL ACTIVITIES</div>
-            {log?.manualActivities?.map((a, i) => (
-              <div key={i} style={{background:t.bgInput,borderRadius:6,padding:"10px 12px",marginBottom:8,border:`1px solid ${t.borderLight}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
-                  <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:700,color:t.text}}>
-                    {ACTIVITY_PRESETS.find(p=>p.label===a.activity)?.icon||"💪"} {a.activity}
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{fontSize:12,color:"#FF6B35",fontFamily:"DM Mono"}}>{a.duration}</div>
-                    <button onClick={()=>removeManualActivity(key,i)} style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:12,padding:"2px 4px",lineHeight:1}}>✕</button>
-                  </div>
-                </div>
-                {a.metrics.length>0&&(
-                  <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-                    {a.metrics.map((m,j)=>(
-                      <div key={j}><span style={{fontSize:8,color:t.textGhost}}>{m.label}: </span><span style={{fontSize:11,color:t.textMuted}}>{m.value}</span></div>
-                    ))}
-                  </div>
-                )}
-                {a.notes&&<div style={{fontSize:11,color:t.textMuted,fontStyle:"italic",marginTop:4}}>{a.notes}</div>}
-              </div>
-            ))}
-            <button onClick={()=>{setManualLogModal(key);setManualForm({activity:"",duration:"",metrics:[],notes:""});}} style={{background:t.bgInput,border:`1px dashed ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"9px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>+ LOG ACTIVITY (sauna, bike, swim…)</button>
-          </div>
+          {renderManualActivitiesSection(key, log)}
         </div>
       </div>
     );
@@ -1243,37 +1282,7 @@ export default function HyroxCalendar() {
           )}
 
           {/* Manual Activities */}
-          <div style={{background:t.bgCard,border:`1px solid ${t.border}`,borderRadius:8,padding:bp.isMobile?"12px 14px":"16px 18px",marginBottom:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div style={{fontFamily:"Barlow Condensed",fontSize:11,fontWeight:700,letterSpacing:"0.2em",color:t.textFaint}}>ADDITIONAL ACTIVITIES</div>
-              <div style={{fontSize:9,color:t.textGhost}}>{log?.manualActivities?.length||0} logged</div>
-            </div>
-            {log?.manualActivities?.map((a, i) => (
-              <div key={i} style={{background:t.bgInput,borderRadius:6,padding:"10px 12px",marginBottom:8,border:`1px solid ${t.borderLight}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-                  <div style={{fontFamily:"Barlow Condensed",fontSize:14,fontWeight:700,color:t.text}}>
-                    {ACTIVITY_PRESETS.find(p=>p.label===a.activity)?.icon||"💪"} {a.activity}
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{fontSize:12,color:"#FF6B35",fontFamily:"DM Mono"}}>{a.duration}</div>
-                    <button onClick={(e)=>{e.stopPropagation();removeManualActivity(key,i);}} style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:12,padding:"2px 4px",lineHeight:1}} title="Remove">✕</button>
-                  </div>
-                </div>
-                {a.metrics.length>0&&(
-                  <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:a.notes?6:0}}>
-                    {a.metrics.map((m,j)=>(
-                      <div key={j}>
-                        <span style={{fontSize:8,letterSpacing:"0.1em",color:t.textGhost}}>{m.label}: </span>
-                        <span style={{fontSize:11,color:t.textMuted}}>{m.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {a.notes&&<div style={{fontSize:11,color:t.textMuted,fontStyle:"italic",marginTop:4}}>{a.notes}</div>}
-              </div>
-            ))}
-            <button onClick={()=>{setManualLogModal(key);setManualForm({activity:"",duration:"",metrics:[],notes:""});}} style={{background:`${t.bgInput}`,border:`1px dashed ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"9px",fontSize:11,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.12em",width:"100%"}}>+ LOG ACTIVITY (sauna, bike, swim…)</button>
-          </div>
+          {renderManualActivitiesSection(key, log)}
 
           {/* Mobile: chat toggle button */}
           {bp.isMobile && (
@@ -1928,123 +1937,191 @@ export default function HyroxCalendar() {
       })()}
 
       {/* Manual Activity Log Modal */}
-      {manualLogModal&&(
-        <div style={{position:"fixed",inset:0,background:t.overlayBg,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}}>
-          <div style={{background:t.modalBg,border:`1px solid ${t.borderFocus}`,borderRadius:10,width:"100%",maxWidth:480,overflow:"hidden",maxHeight:"90vh",overflowY:"auto"}}>
-            <div style={{height:3,background:"#4ECDC4"}}/>
-            <div style={{padding:"18px 22px"}}>
-              <div style={{fontFamily:"Barlow Condensed",fontSize:18,fontWeight:900,letterSpacing:"0.1em",color:t.text,marginBottom:3}}>LOG ACTIVITY</div>
-              <div style={{fontSize:10,color:t.textFaint,marginBottom:18}}>Sauna, bike, swim, walk, or anything else</div>
-
-              {/* Activity selector */}
-              <div style={{marginBottom:14}}>
-                <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>ACTIVITY TYPE</div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {ACTIVITY_PRESETS.map(preset=>(
-                    <button
-                      key={preset.label}
-                      onClick={()=>{
-                        setManualForm(f=>({
-                          ...f,
-                          activity: preset.label,
-                          metrics: preset.defaultMetrics.map(m=>({label:m,value:""})),
-                        }));
-                      }}
-                      style={{
-                        background:manualForm.activity===preset.label?"#4ECDC422":"none",
-                        border:`1px solid ${manualForm.activity===preset.label?"#4ECDC4":t.borderFocus}`,
-                        borderRadius:4,color:manualForm.activity===preset.label?"#4ECDC4":t.textFaint,
-                        cursor:"pointer",padding:"6px 10px",fontSize:11,fontFamily:"DM Mono",
-                        display:"flex",alignItems:"center",gap:4,
-                      }}
-                    >
-                      <span>{preset.icon}</span> {preset.label}
-                    </button>
-                  ))}
-                </div>
-                {/* Custom activity name if "Other" selected */}
-                {manualForm.activity==="Other"&&(
-                  <input
-                    type="text" placeholder="Activity name…"
-                    value={manualForm.activity==="Other"?"":undefined}
-                    onChange={e=>{
-                      const val = e.target.value;
-                      if (val) setManualForm(f=>({...f,activity:val}));
-                    }}
-                    style={{width:"100%",marginTop:8,background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:11,fontFamily:"DM Mono",outline:"none"}}
-                  />
-                )}
+      {manualLogModal&&(()=>{
+        const selectedPreset = ACTIVITY_PRESETS.find(p => p.label === manualForm.activity);
+        const actName = manualForm.activity === "Other" && manualForm.customName ? manualForm.customName : manualForm.activity;
+        const canSave = !!actName && !!manualForm.duration;
+        return (
+        <div style={{position:"fixed",inset:0,background:t.overlayBg,display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:bp.isMobile?10:20}} onClick={()=>setManualLogModal(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:t.modalBg,border:`1px solid ${t.borderFocus}`,borderRadius:12,width:"100%",maxWidth:520,overflow:"hidden",maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
+            {/* Header */}
+            <div style={{height:3,background:selectedPreset?.color||"#4ECDC4"}}/>
+            <div style={{padding:"16px 22px 0",flexShrink:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
+                <div style={{fontFamily:"Barlow Condensed",fontSize:20,fontWeight:900,letterSpacing:"0.1em",color:t.text}}>LOG ACTIVITY</div>
+                <button onClick={()=>setManualLogModal(null)} style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:18,padding:"2px 6px",lineHeight:1}}>✕</button>
               </div>
+              <div style={{fontSize:10,color:t.textFaint,marginBottom:14}}>{keyToDate(manualLogModal).toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+            </div>
 
-              {/* Duration */}
-              <div style={{marginBottom:14}}>
-                <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>DURATION</div>
-                <div style={{display:"flex",gap:6,marginBottom:6}}>
-                  {["10 min","15 min","20 min","30 min","45 min","60 min","90 min"].map(d=>(
-                    <button key={d} onClick={()=>setManualForm(f=>({...f,duration:d}))}
-                      style={{background:manualForm.duration===d?"#FF6B3522":"none",border:`1px solid ${manualForm.duration===d?"#FF6B35":t.borderFocus}`,borderRadius:4,color:manualForm.duration===d?"#FF6B35":t.textFaint,cursor:"pointer",padding:"5px 8px",fontSize:10,fontFamily:"DM Mono"}}>
-                      {d}
-                    </button>
-                  ))}
-                </div>
-                <input type="text" placeholder="Or type: 25 min, 1:30:00, etc." value={manualForm.duration} onChange={e=>setManualForm(f=>({...f,duration:e.target.value}))}
-                  style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:11,fontFamily:"DM Mono",outline:"none"}}/>
-              </div>
+            {/* Scrollable body */}
+            <div style={{overflowY:"auto",padding:"0 22px 18px",flex:1}}>
 
-              {/* Dynamic metrics */}
-              {manualForm.metrics.length>0&&(
-                <div style={{marginBottom:14}}>
-                  <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>METRICS</div>
-                  <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr":"1fr 1fr",gap:8}}>
-                    {manualForm.metrics.map((m,i)=>(
-                      <div key={i}>
-                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                          {m.label==="Custom"?(
-                            <input type="text" placeholder="Metric name" value={m.label==="Custom"?"":m.label}
-                              onChange={e=>{const v=e.target.value;setManualForm(f=>({...f,metrics:f.metrics.map((mm,ii)=>ii===i?{...mm,label:v||"Custom"}:mm)}));}}
-                              style={{background:"none",border:"none",fontSize:8,letterSpacing:"0.15em",color:t.textFaint,outline:"none",padding:0,width:"80%",fontFamily:"DM Mono"}}/>
-                          ):(
-                            <div style={{fontSize:8,letterSpacing:"0.15em",color:t.textGhost}}>{m.label.toUpperCase()}</div>
-                          )}
-                          <button onClick={()=>setManualForm(f=>({...f,metrics:f.metrics.filter((_,ii)=>ii!==i)}))}
-                            style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:10,padding:"0 2px",lineHeight:1}}>✕</button>
+              {/* ── STEP 1: Activity picker as visual grid ── */}
+              {!manualForm.activity ? (
+                <div>
+                  {ACTIVITY_CATEGORIES.map(cat => {
+                    const presets = ACTIVITY_PRESETS.filter(p => p.category === cat.key);
+                    return (
+                      <div key={cat.key} style={{marginBottom:16}}>
+                        <div style={{fontSize:8,letterSpacing:"0.2em",color:cat.color,marginBottom:8,fontFamily:"Barlow Condensed",fontWeight:700}}>{cat.label}</div>
+                        <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:8}}>
+                          {presets.map(preset=>(
+                            <button
+                              key={preset.label}
+                              onClick={()=>setManualForm(f=>({
+                                ...f,
+                                activity: preset.label,
+                                customName: "",
+                                metrics: preset.defaultMetrics.map(m=>({label:m.label,value:"",unit:m.unit})),
+                                duration: "",
+                              }))}
+                              style={{
+                                background:t.bgInput,border:`1px solid ${t.borderLight}`,borderRadius:8,
+                                cursor:"pointer",padding:"14px 10px",display:"flex",flexDirection:"column",
+                                alignItems:"center",gap:6,transition:"all 0.15s",
+                              }}
+                              onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.borderColor=preset.color;(e.currentTarget as HTMLElement).style.background=preset.color+"11";}}
+                              onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.borderColor=t.borderLight;(e.currentTarget as HTMLElement).style.background=t.bgInput;}}
+                            >
+                              <span style={{fontSize:24}}>{preset.icon}</span>
+                              <span style={{fontFamily:"Barlow Condensed",fontSize:12,fontWeight:700,letterSpacing:"0.08em",color:t.textMuted}}>{preset.label}</span>
+                            </button>
+                          ))}
                         </div>
-                        <input type="text" placeholder={m.label==="Custom"?"Value":m.label} value={m.value}
-                          onChange={e=>{const v=e.target.value;setManualForm(f=>({...f,metrics:f.metrics.map((mm,ii)=>ii===i?{...mm,value:v}:mm)}));}}
-                          style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:11,fontFamily:"DM Mono",outline:"none"}}/>
                       </div>
-                    ))}
+                    );
+                  })}
+                </div>
+              ) : (
+                /* ── STEP 2: Details form (shown after picking activity) ── */
+                <div>
+                  {/* Selected activity header */}
+                  <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:18,padding:"12px 14px",background:selectedPreset?(selectedPreset.color+"11"):t.bgInput,border:`1px solid ${selectedPreset?.color||t.borderFocus}44`,borderRadius:8}}>
+                    <span style={{fontSize:28}}>{selectedPreset?.icon||"💪"}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontFamily:"Barlow Condensed",fontSize:18,fontWeight:900,color:t.text,lineHeight:1}}>
+                        {manualForm.activity==="Other" && manualForm.customName ? manualForm.customName : manualForm.activity}
+                      </div>
+                      <div style={{fontSize:9,color:t.textFaint,marginTop:2}}>{selectedPreset?.category.toUpperCase()||"CUSTOM"}</div>
+                    </div>
+                    <button onClick={()=>setManualForm(f=>({...f,activity:"",customName:"",metrics:[],duration:""}))}
+                      style={{background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"4px 10px",fontSize:9,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>CHANGE</button>
+                  </div>
+
+                  {/* Custom name for "Other" */}
+                  {manualForm.activity==="Other"&&(
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>ACTIVITY NAME</div>
+                      <input type="text" placeholder="What did you do?" value={manualForm.customName}
+                        onChange={e=>setManualForm(f=>({...f,customName:e.target.value}))}
+                        autoFocus
+                        style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"10px 12px",fontSize:13,fontFamily:"DM Mono",outline:"none"}}/>
+                    </div>
+                  )}
+
+                  {/* Duration — quick picks + custom */}
+                  <div style={{marginBottom:16}}>
+                    <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:8}}>DURATION</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                      {(selectedPreset?.defaultDurations||["15 min","20 min","30 min","45 min","60 min"]).map(d=>(
+                        <button key={d} onClick={()=>setManualForm(f=>({...f,duration:d}))}
+                          style={{
+                            background:manualForm.duration===d?(selectedPreset?.color||"#4ECDC4")+"22":"none",
+                            border:`1px solid ${manualForm.duration===d?(selectedPreset?.color||"#4ECDC4"):t.borderFocus}`,
+                            borderRadius:6,color:manualForm.duration===d?(selectedPreset?.color||"#4ECDC4"):t.textFaint,
+                            cursor:"pointer",padding:"8px 14px",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.05em",
+                          }}>
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                    <input type="text" placeholder="Or type: 25 min, 1:30:00, etc." value={manualForm.duration}
+                      onChange={e=>setManualForm(f=>({...f,duration:e.target.value}))}
+                      style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"9px 12px",fontSize:12,fontFamily:"DM Mono",outline:"none"}}/>
+                  </div>
+
+                  {/* Effort */}
+                  <div style={{marginBottom:16}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:8}}>
+                      <span>EFFORT (RPE)</span>
+                      <span style={{color:manualForm.rpe>=8?"#F87171":manualForm.rpe>=6?"#FFE66D":"#34D399",fontSize:10,fontFamily:"DM Mono"}}>{manualForm.rpe}/10</span>
+                    </div>
+                    <input type="range" min={1} max={10} value={manualForm.rpe} onChange={e=>setManualForm(f=>({...f,rpe:parseInt(e.target.value)}))}
+                      style={{width:"100%",accentColor:selectedPreset?.color||"#4ECDC4"}}/>
+                  </div>
+
+                  {/* Metrics */}
+                  {manualForm.metrics.length>0&&(
+                    <div style={{marginBottom:16}}>
+                      <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:8}}>METRICS</div>
+                      <div style={{display:"grid",gridTemplateColumns:bp.isMobile?"1fr":"1fr 1fr",gap:10}}>
+                        {manualForm.metrics.map((m,i)=>(
+                          <div key={i} style={{position:"relative"}}>
+                            <div style={{fontSize:8,letterSpacing:"0.12em",color:t.textGhost,marginBottom:4}}>
+                              {m.label==="Custom"?"CUSTOM METRIC":m.label.toUpperCase()}
+                            </div>
+                            <div style={{display:"flex",gap:0}}>
+                              {m.label==="Custom"&&(
+                                <input type="text" placeholder="Name" value={m.label==="Custom"?"":m.label}
+                                  onChange={e=>{const v=e.target.value;setManualForm(f=>({...f,metrics:f.metrics.map((mm,ii)=>ii===i?{...mm,label:v||"Custom"}:mm)}));}}
+                                  style={{width:"40%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRight:"none",borderRadius:"6px 0 0 6px",color:t.textFaint,padding:"9px 10px",fontSize:11,fontFamily:"DM Mono",outline:"none"}}/>
+                              )}
+                              <div style={{flex:1,position:"relative"}}>
+                                <input type="text"
+                                  placeholder={selectedPreset?.defaultMetrics[i]?.placeholder||"Value"}
+                                  value={m.value}
+                                  onChange={e=>{const v=e.target.value;setManualForm(f=>({...f,metrics:f.metrics.map((mm,ii)=>ii===i?{...mm,value:v}:mm)}));}}
+                                  style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:m.label==="Custom"?"0 6px 6px 0":"6px",color:t.textSecondary,padding:"9px 12px",paddingRight:m.unit?40:12,fontSize:12,fontFamily:"DM Mono",outline:"none"}}/>
+                                {m.unit&&<span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:10,color:t.textGhost,pointerEvents:"none"}}>{m.unit}</span>}
+                              </div>
+                              <button onClick={()=>setManualForm(f=>({...f,metrics:f.metrics.filter((_,ii)=>ii!==i)}))}
+                                style={{background:"none",border:"none",color:t.textGhost,cursor:"pointer",fontSize:12,padding:"0 6px",lineHeight:1,flexShrink:0}}>✕</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Add custom metric */}
+                  <div style={{marginBottom:16}}>
+                    <button onClick={()=>setManualForm(f=>({...f,metrics:[...f.metrics,{label:"Custom",value:"",unit:""}]}))}
+                      style={{background:"none",border:`1px dashed ${t.borderFocus}`,borderRadius:6,color:t.textGhost,cursor:"pointer",padding:"7px 14px",fontSize:10,fontFamily:"Barlow Condensed",fontWeight:700,letterSpacing:"0.1em"}}>
+                      + ADD CUSTOM METRIC
+                    </button>
+                  </div>
+
+                  {/* Notes */}
+                  <div style={{marginBottom:18}}>
+                    <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>NOTES</div>
+                    <textarea value={manualForm.notes} onChange={e=>setManualForm(f=>({...f,notes:e.target.value}))}
+                      placeholder={
+                        manualForm.activity==="Sauna"?"focused on deep breathing, 3 rounds of 10 min…":
+                        manualForm.activity==="Cold Plunge"?"alternated with sauna, felt great after…":
+                        manualForm.activity==="Run"?"easy pace, legs felt fresh, nice weather…":
+                        manualForm.activity==="Bike"?"steady Z2 ride, flat route…":
+                        "how it felt, what you focused on…"
+                      }
+                      rows={2} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textSecondary,padding:"9px 12px",fontSize:11,fontFamily:"DM Mono",outline:"none",resize:"none"}}/>
+                  </div>
+
+                  {/* Save / Cancel */}
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>setManualLogModal(null)} style={{flex:1,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:6,color:t.textFaint,cursor:"pointer",padding:"10px",fontSize:11,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>CANCEL</button>
+                    <button onClick={()=>submitManualLog(manualLogModal)}
+                      disabled={!canSave}
+                      style={{flex:2,background:canSave?(selectedPreset?.color||"#4ECDC4"):(isDark?"#333":"#ccc"),border:"none",borderRadius:6,color:isDark?"#0A0A0A":"#FFF",cursor:canSave?"pointer":"not-allowed",padding:"10px",fontSize:13,fontFamily:"Barlow Condensed",fontWeight:900,letterSpacing:"0.1em",opacity:canSave?1:0.5}}>
+                      {selectedPreset?.icon||"💪"} SAVE ACTIVITY
+                    </button>
                   </div>
                 </div>
               )}
-
-              {/* Add custom metric */}
-              <div style={{marginBottom:14}}>
-                <button onClick={()=>setManualForm(f=>({...f,metrics:[...f.metrics,{label:"Custom",value:""}]}))}
-                  style={{background:"none",border:`1px dashed ${t.borderFocus}`,borderRadius:4,color:t.textGhost,cursor:"pointer",padding:"5px 10px",fontSize:9,fontFamily:"DM Mono",letterSpacing:"0.1em"}}>
-                  + ADD METRIC
-                </button>
-              </div>
-
-              {/* Notes */}
-              <div style={{marginBottom:18}}>
-                <div style={{fontSize:8,letterSpacing:"0.2em",color:t.textFaint,marginBottom:7}}>NOTES</div>
-                <textarea value={manualForm.notes} onChange={e=>setManualForm(f=>({...f,notes:e.target.value}))}
-                  placeholder="felt great, focused on deep breathing, cold after…"
-                  rows={2} style={{width:"100%",background:t.bgInput,border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textSecondary,padding:"7px 10px",fontSize:10,fontFamily:"DM Mono",outline:"none",resize:"none"}}/>
-              </div>
-
-              {/* Actions */}
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>setManualLogModal(null)} style={{flex:1,background:"none",border:`1px solid ${t.borderFocus}`,borderRadius:4,color:t.textFaint,cursor:"pointer",padding:"9px",fontSize:10,fontFamily:"Barlow Condensed",letterSpacing:"0.1em"}}>CANCEL</button>
-                <button onClick={()=>submitManualLog(manualLogModal)}
-                  disabled={!manualForm.activity||!manualForm.duration}
-                  style={{flex:2,background:!manualForm.activity||!manualForm.duration?"#333":"#4ECDC4",border:"none",borderRadius:4,color:isDark?"#0A0A0A":"#FFF",cursor:!manualForm.activity||!manualForm.duration?"not-allowed":"pointer",padding:"9px",fontSize:12,fontFamily:"Barlow Condensed",fontWeight:900,letterSpacing:"0.1em",opacity:!manualForm.activity||!manualForm.duration?0.5:1}}>SAVE ACTIVITY</button>
-              </div>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
